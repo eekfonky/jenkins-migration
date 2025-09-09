@@ -49,8 +49,9 @@ def find_used_plugins_in_xml(file_path):
             if plugin_attr:
                 plugin_id = plugin_attr.split('@')[0]
                 used_plugins[plugin_id] = file_path
-    except ET.ParseError:
-        pass  # Ignore malformed XML
+    except ET.ParseError as e:
+        print(f"Warning: Cannot parse XML {file_path}: {e}", file=sys.stderr)
+        # Continue processing other files instead of silent failure
     return used_plugins
 
 def resolve_dependencies(initial_plugins_reasons, all_plugins_info):
