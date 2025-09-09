@@ -1,0 +1,98 @@
+# Ansible
+*.retry
+.vault_pass
+vault_password_file
+ansible.cfg.local
+inventory/host_vars/*
+inventory/group_vars/*
+!inventory/host_vars/.gitkeep
+!inventory/group_vars/.gitkeep
+roles/*/files/sensitive/*
+roles/*/vars/secrets.yml
+collections/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+jenkins-cli.jar
+jenkins-cli.jar.version
+jenkins-cli.jar.backup
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+*.bak
+*.backup
+
+# Jenkins migration specific
+jenkins_exports/
+
+# Docker volumes and generated configs
+docker-data/
+jenkins-data/
+docker-compose.yml
+jenkins.yaml
+plugins.txt
+
+# Migration runtime state
+migration-state
+.migration-*
+jenkins-migration-state.json
+*-state.json
+
+# Claude Code
+CLAUDE.md
+.claude/
+.bmad-*/
+.gemini/
+
+# Tests
+tests/
+
+# Runtime logs and state
+/tmp/jenkins-migration-logs/
+*.pid
+*.lock
+
+# Configuration with sensitive data
+jenkins-migrate.conf.local
+config/*.local
+*-credentials.conf
+*.env.local
+.env
+
+# Generated files during migration
+Dockerfile.generated
+Dockerfile
+remove-phase-tests.sh
+current-plugins.txt
+current-version.txt
+startup.sh
+*.groovy
+security.yaml
+
+# Docker runtime
+.docker/
+docker-compose.override.yml
+
