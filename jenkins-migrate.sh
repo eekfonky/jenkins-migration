@@ -292,6 +292,15 @@ generate_docker_config() {
         return 1
     fi
     log_success "⚙️  Generated jenkins.yaml (JCasC) configuration"
+
+    # High-fidelity validation of the generated JCasC file
+    log_info "Performing high-fidelity validation of JCasC configuration..."
+    if ! "${SCRIPT_DIR}/scripts/validate-casc.sh" --docker "${docker_dir}/jenkins.yaml"; then
+        log_error "Generated JCasC configuration failed validation."
+        log_error "Aborting migration to prevent deployment of a broken configuration."
+        return 1
+    fi
+    log_success "JCasC configuration passed high-fidelity validation"
     
     # Export all variables for template processing
     export JENKINS_UID JENKINS_GID JENKINS_HOME JENKINS_PORT JENKINS_AGENT_PORT
