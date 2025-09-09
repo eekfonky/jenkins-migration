@@ -252,22 +252,39 @@ docker compose restart jenkins
 
 ## Troubleshooting
 
+General commands for inspecting the state of the new Dockerized Jenkins:
+
 ```bash
-# View logs
-docker logs jenkins
+# View live logs from the Jenkins container
+docker logs -f jenkins
 
-# Check container status  
-docker ps -a | grep jenkins
+# Check the status of all migration-related containers
+docker compose -f /opt/jenkins-docker/docker-compose.yml ps
 
-# Restart Jenkins
+# Restart the Jenkins container
 docker restart jenkins
-
-# Plugin installation issues
-docker logs jenkins | grep -i plugin
-
-# JCasC configuration errors
-docker logs jenkins | grep -i casc
 ```
+
+### JCasC Validation Failures
+
+If the migration fails during the "high-fidelity validation" step, it means the JCasC configuration generated from your old Jenkins is not compatible with the new Docker environment.
+
+Here's how to debug this:
+
+1.  **Examine the logs:** In the output of the `jenkins-migrate.sh` script, look for a section that starts with `--- DOCKER LOGS ---`. This section will contain the exact error message from Jenkins as it tried to load your configuration.
+
+2.  **Identify the problem:** The error will typically be a `ConfigurationAsCodeException`. For example:
+    *   `io.jenkins.plugins.casc.ConfiguratorException: 'credentials' is not a valid configuration for 'jenkins'`
+    *   `No such DSL method 'pipelineTriggers' found among steps`
+
+3.  **Fix the configuration:**
+    *   The generated configuration file that needs editing is located at `/opt/jenkins-docker/jenkins.yaml`.
+    *   You can open this file and try to fix the error based on the log message.
+    *   After editing the file, you can quickly test your fix by running the validation script manually:
+        ```bash
+        sudo ./scripts/validate-casc.sh --docker /opt/jenkins-docker/jenkins.yaml
+        ```
+    *   Once the manual validation passes, you can re-run `sudo ./jenkins-migrate.sh`. The script will regenerate the configuration, so if the error was due to a problem in the `enhance_jcasc.py` script, you may need to fix the script itself.
 
 ---
 
