@@ -29,6 +29,7 @@ DETECTED_SERVICE_TYPE=""
 MIGRATION_ID=""
 DRY_RUN=${DRY_RUN:-false}
 DEBUG=${DEBUG:-false}
+SKIP_PLUGIN_ANALYSIS=${SKIP_PLUGIN_ANALYSIS:-false}
 
 # Load configuration if exists
 CONFIG_FILE="${SCRIPT_DIR}/jenkins-migrate.conf"
@@ -85,6 +86,7 @@ USAGE:
 OPTIONS:
     --dry-run       Preview changes without executing
     --rollback      Rollback to systemd Jenkins service
+    --skip-plugin-analysis  Skip the check for unused plugins
     --debug         Enable verbose debug output
     -y, --yes       Skip interactive confirmations
     -h, --help      Show this help message
@@ -116,6 +118,9 @@ parse_arguments() {
                 ;;
             --rollback)
                 ROLLBACK=true
+                ;;
+            --skip-plugin-analysis)
+                SKIP_PLUGIN_ANALYSIS=true
                 ;;
             --debug)
                 DEBUG=true
@@ -284,6 +289,13 @@ generate_docker_config() {
         local plugin_count
         plugin_count=$(wc -l < "${docker_dir}/plugins.txt" 2>/dev/null || echo "0")
         log_success "🔌 Extracted ${plugin_count} plugins to plugins.txt"
+
+        # Analyze and clean up unused plugins
+        if [[ "${SKIP_PLUGIN_ANALYSIS}" == "false" ]]; then
+            run_plugin_analysis || log_warning "Plugin analysis step encountered an issue. Continuing with the original plugin list."
+        else
+            log_info "Skipping plugin analysis as requested."
+        fi
     fi
     
     # Generate JCasC configuration (required by Dockerfile)
