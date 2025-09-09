@@ -158,8 +158,8 @@ try:
     
     if 'crumbIssuer' in config['security']:
         # Replace crumbIssuer with correct crumb configuration 
-        # The crumb section should be empty for default CSRF protection
-        config['security']['crumb'] = {}
+        # The crumb section should be explicit for default CSRF protection
+        config['security']['crumb'] = {'issuer': {'default': {}}}
         del config['security']['crumbIssuer']
     
     # Ensure location configuration
