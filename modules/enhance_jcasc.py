@@ -39,25 +39,38 @@ def enhance_jcasc(input_file):
             config['security'] = {}
 
         # Use correct CSRF crumb issuer configuration
+        # Handles the transition from 'crumbIssuer' to 'crumb' gracefully
         if 'crumb' not in config['security']:
-            config['security']['crumb'] = {}
+            if 'crumbIssuer' in config['security']:
+                # If the old key exists, move its value to the new key
+                config['security']['crumb'] = config['security']['crumbIssuer']
+                del config['security']['crumbIssuer']
+            else:
+                # If neither key exists, configure the default CSRF issuer
+                config['security']['crumb'] = {
+                    'issuer': {
+                        'default': {}
+                    }
+                }
 
         # Remove any invalid attributes we've seen
         if 'installState' in config['jenkins']:
             del config['jenkins']['installState']
 
-        if 'crumbIssuer' in config['security']:
-            # Replace crumbIssuer with correct crumb configuration
-            # The crumb section should be explicit for default CSRF protection
-            config['security']['crumb'] = {'issuer': {'default': {}}}
-            del config['security']['crumbIssuer']
-
-        # Ensure location configuration
-        if 'unclassified' not in config['unclassified']:
+        # Ensure location configuration is present, preserving existing values
+        if 'location' not in config.get('unclassified', {}):
+            # If no location is configured at all, create a default one.
             config['unclassified']['location'] = {
-                'url': '${JENKINS_URL:-http://localhost:8080}',
-                'adminAddress': 'jenkins@localhost'
+                'adminAddress': 'jenkins@localhost',
+                'url': '${JENKINS_URL:-http://localhost:8080}'
             }
+        else:
+            # If location is configured, ensure adminAddress is set if it's missing or empty
+            if not config['unclassified']['location'].get('adminAddress'):
+                config['unclassified']['location']['adminAddress'] = 'jenkins@localhost'
+            # Ensure url is set if it's missing or empty
+            if not config['unclassified']['location'].get('url'):
+                config['unclassified']['location']['url'] = '${JENKINS_URL:-http://localhost:8080}'
 
         # Remove deprecated AdminWhitelistRule configuration that causes stack traces
         if 'security' in config and config['security']:
