@@ -39,26 +39,24 @@ def find_config_files(jenkins_home):
     return config_files
 
 def find_used_plugins_in_xml(file_path):
-    """Parse an XML file to find plugin attributes."""
-    used_plugins = set()
+    """Parse an XML file to find plugin attributes and their locations."""
+    used_plugins = {}
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
-        # Find all tags with a 'plugin' attribute
         for elem in root.findall(".//*[@plugin]"):
             plugin_attr = elem.get('plugin')
             if plugin_attr:
-                # Format is often "plugin-id@version"
-                used_plugins.add(plugin_attr.split('@')[0])
+                plugin_id = plugin_attr.split('@')[0]
+                used_plugins[plugin_id] = file_path
     except ET.ParseError:
-        # Ignore malformed XML files
-        pass
+        pass  # Ignore malformed XML
     return used_plugins
 
-def resolve_dependencies(initial_plugins, all_plugins_info):
-    """Resolve all dependencies for a given set of plugins."""
-    resolved = set(initial_plugins)
-    queue = deque(list(initial_plugins))
+def resolve_dependencies(initial_plugins_reasons, all_plugins_info):
+    """Resolve all dependencies, tracking the reason for inclusion."""
+    resolved_reasons = dict(initial_plugins_reasons)
+    queue = deque(list(initial_plugins_reasons.keys()))
 
     while queue:
         plugin_id = queue.popleft()
@@ -67,10 +65,10 @@ def resolve_dependencies(initial_plugins, all_plugins_info):
         if plugin_info and 'dependencies' in plugin_info:
             for dep in plugin_info['dependencies']:
                 dep_id = dep['shortName']
-                if dep_id not in resolved:
-                    resolved.add(dep_id)
+                if dep_id not in resolved_reasons:
+                    resolved_reasons[dep_id] = f"Dependency of '{plugin_id}'"
                     queue.append(dep_id)
-    return resolved
+    return resolved_reasons
 
 def main():
     parser = argparse.ArgumentParser(description="Analyze Jenkins plugins to find unused ones.")
@@ -100,30 +98,41 @@ def main():
         print("Warning: Jenkins API credentials not provided. Dependency resolution may be incomplete.", file=sys.stderr)
 
     # 3. Find all directly used plugins from config.xml files
-    directly_used_plugins = set()
+    directly_used_plugins_reasons = {}
     config_files = find_config_files(args.jenkins_home)
     for conf_file in config_files:
-        directly_used_plugins.update(find_used_plugins_in_xml(conf_file))
+        plugins_in_file = find_used_plugins_in_xml(conf_file)
+        for plugin_id, path in plugins_in_file.items():
+            relative_path = os.path.relpath(path, args.jenkins_home)
+            directly_used_plugins_reasons[plugin_id] = f"Directly used in '{relative_path}'"
 
     # 4. Add all bundled plugins to the used set as a safeguard
     for plugin_id, info in all_plugins_info.items():
-        if info.get('bundled', False):
-            directly_used_plugins.add(plugin_id)
+        if info.get('bundled', False) and plugin_id not in directly_used_plugins_reasons:
+            directly_used_plugins_reasons[plugin_id] = "Bundled core plugin"
 
     # 5. Resolve all dependencies
-    active_plugins = resolve_dependencies(directly_used_plugins, all_plugins_info)
+    active_plugins_reasons = resolve_dependencies(directly_used_plugins_reasons, all_plugins_info)
+    active_plugin_ids = set(active_plugins_reasons.keys())
 
     # 6. Determine unused plugins
-    unused_plugins = installed_plugins - active_plugins
+    unused_plugins = installed_plugins - active_plugin_ids
 
     # 7. Generate cleaned plugins list and report
-    cleaned_plugins_list = [p for p in installed_plugins_with_versions if p.split(':')[0] in active_plugins]
+    plugin_version_map = {p.split(':')[0]: p for p in installed_plugins_with_versions}
 
     with open(args.output_file, 'w') as f:
-        f.write("# Cleaned Jenkins plugins list\n")
-        f.write("# Unused plugins have been removed based on configuration analysis.\n\n")
-        for plugin in sorted(cleaned_plugins_list):
-            f.write(f"{plugin}\n")
+        f.write("# Jenkins Plugin Analysis Report\n")
+        f.write("# Unused plugins have been removed. Kept plugins include a comment explaining why.\n\n")
+
+        sorted_active_plugins = sorted(list(active_plugin_ids))
+
+        for plugin_id in sorted_active_plugins:
+            reason = active_plugins_reasons.get(plugin_id, "Unknown reason")
+            plugin_with_version = plugin_version_map.get(plugin_id, f"{plugin_id}:latest")
+
+            f.write(f"# Kept because: {reason}\n")
+            f.write(f"{plugin_with_version}\n\n")
 
     with open(args.report_file, 'w') as f:
         if unused_plugins:
