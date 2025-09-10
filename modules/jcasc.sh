@@ -49,47 +49,71 @@ generate_jcasc_from_schema() {
         return 1
     fi
     
-    # Verify Jenkins is accessible
-    log_info "Testing Jenkins API connectivity to ${JENKINS_URL}/api/json..."
-    if ! curl -sf -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" "${JENKINS_URL}/api/json" >/dev/null 2>&1; then
-        log_error "Jenkins API not accessible for schema-based generation"
-        log_error "Curl failed connecting to ${JENKINS_URL}/api/json"
-        log_error "Check if Jenkins is running and credentials are correct"
-        return 1
+    # Use centralized connectivity validation (skip if already validated)
+    if [[ ! -f "${MIGRATION_STATE_DIR}/jenkins_validated" ]]; then
+        if ! validate_jenkins_connectivity "${JENKINS_URL}" "${JENKINS_USER}" "${JENKINS_API_TOKEN}"; then
+            return 1
+        fi
+        touch "${MIGRATION_STATE_DIR}/jenkins_validated"
     fi
     
     log_info "Generating JCasC configuration from live Jenkins schema..."
     
-    # Get current Jenkins configuration via JCasC export
-    local export_url="${JENKINS_URL}/configuration-as-code/export"
-    local temp_export
-    temp_export=$(mktemp)
+    # Check for cached JCasC export first
+    local cache_dir="${MIGRATION_STATE_DIR}/cache"
+    local cache_file="${cache_dir}/jcasc_export.yaml"
+    local cache_timestamp="${cache_dir}/jcasc_export.timestamp"
+    local cache_valid=false
     
-    log_info "Attempting JCasC export from ${export_url}..."
-    if curl -sf -X POST -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" "${export_url}" > "${temp_export}"; then
-        log_success "Retrieved current JCasC configuration from ${export_url}"
-        
-        # Enhance exported config with migration-specific settings
-        enhance_exported_jcasc "${temp_export}" "${output_file}"
-        local enhance_status=$?
-        
-        rm -f "${temp_export}"
-        return ${enhance_status}
-    else
-        rm -f "${temp_export}"
-        log_error "Could not export JCasC configuration from Jenkins"
-        log_error "URL: ${export_url}"
-        log_error ""
-        log_error "SOLUTION: The Jenkins user '${JENKINS_USER}' needs admin permissions."
-        log_error "Please ensure this user has 'Administer' permission in Jenkins."
-        log_error ""
-        log_error "To fix:"
-        log_error "  1. Go to Jenkins > Manage Jenkins > Manage Users"
-        log_error "  2. Edit user '${JENKINS_USER}'"  
-        log_error "  3. Grant 'Administer' permission or make user admin"
-        log_error "  4. Or use a different admin user in jenkins-migrate.conf"
-        return 1
+    # Create cache directory if it doesn't exist
+    mkdir -p "${cache_dir}"
+    
+    # Check if cache is valid (less than 1 hour old)
+    if [[ -f "${cache_file}" && -f "${cache_timestamp}" ]]; then
+        local cache_age
+        cache_age=$(( $(date +%s) - $(cat "${cache_timestamp}") ))
+        if [[ ${cache_age} -lt 3600 ]]; then
+            log_info "Using cached JCasC export (${cache_age}s old)"
+            cache_valid=true
+        fi
     fi
+    
+    local temp_export
+    if [[ "${cache_valid}" == "true" ]]; then
+        temp_export="${cache_file}"
+    else
+        # Get current Jenkins configuration via JCasC export
+        local export_url="${JENKINS_URL}/configuration-as-code/export"
+        temp_export=$(mktemp)
+        
+        log_info "Attempting JCasC export from ${export_url}..."
+        if curl -sf -X POST -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" "${export_url}" > "${temp_export}"; then
+            log_success "Retrieved current JCasC configuration from ${export_url}"
+            
+            # Cache the successful export
+            cp "${temp_export}" "${cache_file}"
+            date +%s > "${cache_timestamp}"
+        else
+            rm -f "${temp_export}"
+            log_error "Could not export JCasC configuration from Jenkins"
+            log_error "URL: ${export_url}"
+            log_error ""
+            log_error "SOLUTION: The Jenkins user '${JENKINS_USER}' needs admin permissions."
+            log_error "Please ensure this user has 'Administer' permission in Jenkins."
+            return 1
+        fi
+    fi
+    
+    # Enhance exported config with migration-specific settings
+    enhance_exported_jcasc "${temp_export}" "${output_file}"
+    local enhance_status=$?
+    
+    # Clean up temp file if it's not the cache
+    if [[ "${temp_export}" != "${cache_file}" ]]; then
+        rm -f "${temp_export}"
+    fi
+    
+    return ${enhance_status}
 }
 
 #######################################

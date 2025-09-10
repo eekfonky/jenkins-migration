@@ -91,7 +91,8 @@ validate_jcasc_docker() {
     fi
     log_info "Found JENKINS_HOME at ${jenkins_home} to mount for plugins."
 
-    local container_name="jcasc-validator-$(date +%s)"
+    local container_name
+    container_name="jcasc-validator-$(date +%s)"
     log_info "Starting temporary container '${container_name}' for validation..."
 
     local validation_logs

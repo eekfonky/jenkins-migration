@@ -45,11 +45,20 @@ if [[ -f "${CONFIG_FILE}" ]]; then
 fi
 
 # Load library functions
+# shellcheck source=lib/logging.sh
+# shellcheck source=lib/validation.sh  
+# shellcheck source=lib/templating.sh
+# shellcheck source=lib/jenkins_connectivity.sh
 for lib_file in "${SCRIPT_DIR}/lib"/*.sh; do
     [[ -f "${lib_file}" ]] && source "${lib_file}"
 done
 
-# Load module functions  
+# Load module functions
+# shellcheck source=modules/docker.sh
+# shellcheck source=modules/jcasc.sh
+# shellcheck source=modules/jenkins_service.sh
+# shellcheck source=modules/migration_state.sh
+# shellcheck source=modules/plugin_analysis.sh
 for module_file in "${SCRIPT_DIR}/modules"/*.sh; do
     [[ -f "${module_file}" ]] && source "${module_file}"
 done

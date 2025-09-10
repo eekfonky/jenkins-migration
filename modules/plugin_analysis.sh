@@ -63,7 +63,20 @@ run_plugin_analysis() {
         log_warning "Jenkins API credentials not found. Plugin dependency analysis will be less accurate."
     fi
 
-    # 4. Run the analysis script
+    # 4. Validate connectivity once before running analysis
+    if [[ -n "${JENKINS_URL:-}" && -n "${JENKINS_USER:-}" && -n "${JENKINS_API_TOKEN:-}" ]]; then
+        if [[ ! -f "${MIGRATION_STATE_DIR}/jenkins_validated" ]]; then
+            if ! validate_jenkins_connectivity "${JENKINS_URL}" "${JENKINS_USER}" "${JENKINS_API_TOKEN}"; then
+                log_error "Jenkins connectivity validation failed. Plugin analysis will be less accurate."
+            else
+                touch "${MIGRATION_STATE_DIR}/jenkins_validated"
+                # Pre-cache API data for faster analysis
+                cache_jenkins_api_data "${JENKINS_URL}" "${JENKINS_USER}" "${JENKINS_API_TOKEN}" "${MIGRATION_STATE_DIR}/cache"
+            fi
+        fi
+    fi
+
+    # 5. Run the analysis script
     log_info "Running Python script to analyze plugin usage..."
     if ! python3 "${SCRIPT_DIR}/modules/analyze_plugins.py" "${python_args[@]}"; then
         log_error "Plugin analysis script failed. Aborting plugin cleanup."

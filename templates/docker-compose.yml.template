@@ -50,6 +50,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+{{#ENABLE_WATCHTOWER}}
 
   watchtower:
     image: containrrr/watchtower
@@ -69,6 +70,7 @@ services:
       - jenkins-network
     depends_on:
       - jenkins
+{{/ENABLE_WATCHTOWER}}
 
 networks:
   jenkins-network:

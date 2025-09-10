@@ -7,10 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
 # Load libraries
+# shellcheck source=../lib/logging.sh
 source "${PROJECT_DIR}/lib/logging.sh"
 
 # Load modules
+# shellcheck source=../modules/jenkins_service.sh
 source "${PROJECT_DIR}/modules/jenkins_service.sh"
+# shellcheck source=../modules/migration_state.sh
 source "${PROJECT_DIR}/modules/migration_state.sh"
 
 #######################################

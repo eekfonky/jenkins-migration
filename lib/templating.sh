@@ -3,7 +3,7 @@
 # Templating utilities for Jenkins Migration Tool using envsubst
 
 #######################################
-# Process template with envsubst
+# Process template with envsubst and conditional sections
 # Arguments:
 #   $1 - Template file path
 #   $2 - Output file path (optional, defaults to stdout)
@@ -32,15 +32,60 @@ process_template() {
         done <<< "${env_vars}"
     fi
     
-    # Process template with envsubst
+    # Process conditional sections first
+    local temp_file
+    temp_file=$(mktemp)
+    process_conditionals "${template_file}" > "${temp_file}"
+    
+    # Then process with envsubst
     if [[ -n "${output_file}" ]]; then
-        envsubst < "${template_file}" > "${output_file}"
+        envsubst < "${temp_file}" > "${output_file}"
         log_debug "Template processed to: ${output_file}"
     else
-        envsubst < "${template_file}"
+        envsubst < "${temp_file}"
     fi
     
+    rm -f "${temp_file}"
     return 0
+}
+
+#######################################
+# Process conditional sections in templates
+# Supports {{#VAR}}...{{/VAR}} syntax
+#######################################
+process_conditionals() {
+    local file="$1"
+    local in_conditional=false
+    local conditional_var=""
+    local include_section=false
+    
+    while IFS= read -r line; do
+        # Check for start of conditional
+        if [[ "${line}" =~ ^\{\{#([A-Za-z_][A-Za-z0-9_]*)\}\}$ ]]; then
+            conditional_var="${BASH_REMATCH[1]}"
+            in_conditional=true
+            # Check if variable is set to "true"
+            local var_value
+            var_value="${!conditional_var:-}"
+            include_section=$([[ "${var_value,,}" == "true" ]] && echo true || echo false)
+            continue
+        fi
+        
+        # Check for end of conditional
+        if [[ "${line}" =~ ^\{\{/([A-Za-z_][A-Za-z0-9_]*)\}\}$ ]]; then
+            if [[ "${BASH_REMATCH[1]}" == "${conditional_var}" ]]; then
+                in_conditional=false
+                conditional_var=""
+                include_section=false
+            fi
+            continue
+        fi
+        
+        # Output line if not in conditional or if condition is true
+        if [[ "${in_conditional}" == false ]] || [[ "${include_section}" == true ]]; then
+            echo "${line}"
+        fi
+    done < "${file}"
 }
 
 #######################################

@@ -1,13 +1,27 @@
-import yaml
+"""
+Jenkins Configuration as Code (JCasC) enhancement module.
+This module enhances exported JCasC configurations for Docker migration.
+"""
 import sys
 import os
 import argparse
 from datetime import datetime
 
+import yaml
+
 def enhance_jcasc(input_file):
+    """
+    Enhance exported JCasC configuration for Docker migration.
+    
+    Args:
+        input_file (str): Path to the exported JCasC configuration file
+        
+    Returns:
+        dict: Enhanced configuration dictionary
+    """
     try:
         # Load exported configuration
-        with open(input_file, 'r') as f:
+        with open(input_file, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f) or {}
 
         # Ensure we have the main sections
@@ -21,8 +35,10 @@ def enhance_jcasc(input_file):
             config['tool'] = {}
 
         # Get migration variables from environment
-        migration_timestamp = os.environ.get('MIGRATION_TIMESTAMP', datetime.now().isoformat())
-        migration_id = os.environ.get('MIGRATION_ID', 'mig_' + datetime.now().strftime('%Y%m%d_%H%M%S'))
+        migration_timestamp = os.environ.get('MIGRATION_TIMESTAMP',
+                                              datetime.now().isoformat())
+        migration_id = os.environ.get('MIGRATION_ID',
+                                      'mig_' + datetime.now().strftime('%Y%m%d_%H%M%S'))
 
         # Preserve existing system message if it exists, otherwise don't add migration message
         # User doesn't want migration messages in the Jenkins UI
@@ -75,7 +91,8 @@ def enhance_jcasc(input_file):
         # Remove deprecated AdminWhitelistRule configuration that causes stack traces
         if 'security' in config and config['security']:
             # Remove AdminWhitelistRule and its variants
-            deprecated_keys = ['adminWhitelistRule', 'AdminWhitelistRule', 'slaveToMasterAccessControl']
+            deprecated_keys = ['adminWhitelistRule', 'AdminWhitelistRule',
+                               'slaveToMasterAccessControl']
             for key in deprecated_keys:
                 if key in config['security']:
                     del config['security'][key]

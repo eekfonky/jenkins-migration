@@ -54,17 +54,58 @@ install_docker() {
 pull_docker_images() {
     local images=("jenkins/jenkins:lts" "containrrr/watchtower")
     
-    log_info "Pulling required Docker images..."
+    log_info "Pulling ${#images[@]} Docker images in parallel..."
     
-    for image in "${images[@]}"; do
-        log_info "Pulling ${image}..."
-        if docker pull "${image}"; then
-            log_success "✓ Pulled ${image}"
+    # Start parallel pulls with progress tracking
+    local pids=()
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    local completed=0
+    
+    for i in "${!images[@]}"; do
+        local image="${images[$i]}"
+        (
+            if docker pull "${image}" >"${temp_dir}/pull_${i}.log" 2>&1; then
+                echo "SUCCESS:${image}" >"${temp_dir}/result_${i}"
+            else
+                echo "FAILED:${image}" >"${temp_dir}/result_${i}"
+                cat "${temp_dir}/pull_${i}.log" >&2
+            fi
+        ) &
+        pids+=($!)
+    done
+    
+    # Wait for all pulls with progress updates
+    local failed=false
+    local successful_images=()
+    for i in "${!pids[@]}"; do
+        if wait "${pids[$i]}"; then
+            local result
+            result=$(cat "${temp_dir}/result_${i}")
+            if [[ "${result}" == SUCCESS:* ]]; then
+                local image="${result#*:}"
+                successful_images+=("${image}")
+                ((completed++))
+            else
+                failed=true
+            fi
         else
-            log_error "Failed to pull ${image}"
-            return 1
+            failed=true
         fi
     done
+    
+    # Single consolidated status message
+    if [[ ${#successful_images[@]} -gt 0 ]]; then
+        log_success "✓ Successfully pulled ${#successful_images[@]}/${#images[@]} images: ${successful_images[*]}"
+    fi
+    
+    # Clean up temp files
+    rm -rf "${temp_dir}"
+    
+    if [[ "${failed}" == "true" ]]; then
+        log_error "One or more Docker image pulls failed"
+        return 1
+    fi
     
     return 0
 }
@@ -89,23 +130,31 @@ start_jenkins_containers() {
         return 1
     fi
     
-    # Build custom Jenkins image with plugins.txt
-    log_info "Building custom Jenkins image..."
-    if ! docker compose build; then
-        log_warning "Docker build had issues (likely plugin installation)"
-        log_info "Continuing with base Jenkins image and existing plugins..."
+    # Build and start containers in single operation
+    log_info "Building and starting Jenkins containers..."
+    if ! docker compose up -d --build; then
+        # If combined operation fails, try to determine the cause
+        log_warning "Combined build and start failed, checking build separately..."
+        if ! docker compose build --quiet; then
+            log_warning "Docker build had issues (likely plugin installation)"
+            log_info "Continuing with base Jenkins image and existing plugins..."
+            # Try starting without build
+            if ! docker compose up -d; then
+                log_error "❌ Failed to start Jenkins containers - migration cannot continue"
+                log_error "   Check docker-compose.yml and container logs for details"
+                log_error "   Rollback: sudo ./jenkins-migrate.sh --rollback"
+                return 1
+            fi
+        else
+            # Build succeeded but start failed
+            log_error "❌ Failed to start Jenkins containers - migration cannot continue"
+            log_error "   Check docker-compose.yml and container logs for details"
+            log_error "   Rollback: sudo ./jenkins-migrate.sh --rollback"
+            return 1
+        fi
     fi
     
-    # Start containers
-    log_info "Starting Jenkins containers..."
-    if ! docker compose up -d; then
-        log_error "❌ Failed to start Jenkins containers - migration cannot continue"
-        log_error "   Check docker-compose.yml and container logs for details"
-        log_error "   Rollback: sudo ./jenkins-migrate.sh --rollback"
-        return 1
-    fi
-    
-    log_success "Containers started successfully"
+    log_success "Containers built and started successfully"
     
     # Show container status
     log_info "Container status:"
