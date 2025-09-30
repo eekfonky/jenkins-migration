@@ -12,17 +12,6 @@
     - vars/main.yml
     - vars/vault.yml
 
-  pre_tasks:
-    - name: Install required Ansible collections
-      ansible.builtin.command:
-        cmd: >-
-          ansible-galaxy collection install
-          community.docker:>=3.4.0 community.general:>=7.0.0 ansible.posix:>=1.5.0 --force
-      delegate_to: localhost
-      run_once: true
-      become: false
-      changed_when: false
-
   roles:
     - jenkins_migration
 
