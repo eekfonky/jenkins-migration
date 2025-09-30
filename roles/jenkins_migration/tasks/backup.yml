@@ -7,15 +7,37 @@
     state: directory
     mode: "0755"
 
-- name: Backup - Remove old backup files (keep last 5)
-  ansible.builtin.shell: |
-    set -o pipefail
-    find {{ jenkins_migration_docker_dir }}/backup -type f -name "*.backup" -mtime +7 -delete
-    ls -t {{ jenkins_migration_docker_dir }}/backup/*.backup 2>/dev/null | tail -n +6 | xargs -r rm || true
-  args:
-    executable: /bin/bash
+- name: Backup - Find backup files older than 7 days
+  ansible.builtin.find:
+    paths: "{{ jenkins_migration_docker_dir }}/backup"
+    patterns: "*.backup"
+    age: "7d"
+    age_stamp: mtime
+  register: old_backup_files
   changed_when: false
-  failed_when: false
+
+- name: Backup - Remove backups older than 7 days
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_backup_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Backup - Find all remaining backup files
+  ansible.builtin.find:
+    paths: "{{ jenkins_migration_docker_dir }}/backup"
+    patterns: "*.backup"
+  register: all_backup_files
+  changed_when: false
+
+- name: Backup - Remove oldest backups (keep last 5)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ (all_backup_files.files | sort(attribute='mtime'))[:-5] }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
 
 - name: Backup - Create systemd service backup
   ansible.builtin.copy:

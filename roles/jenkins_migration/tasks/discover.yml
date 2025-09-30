@@ -72,22 +72,56 @@
     name: jenkins
   register: jenkins_systemd_facts
 
-- name: Discover - Get systemd environment variables using systemctl show
-  ansible.builtin.command:
-    cmd: systemctl show jenkins --property=Environment --value
-  register: jenkins_systemctl_environment
-  changed_when: false
-  # ansible-lint command-instead-of-module - No systemd module equivalent for extracting environment variables
-
-- name: Discover - Parse systemctl environment output into dictionary
+- name: Discover - Decode systemd service file content
   ansible.builtin.set_fact:
-    jenkins_systemd_environment_dict: >-
-      {{
-        dict(jenkins_systemctl_environment.stdout.split() |
-        map('split', '=', 1) |
-        selectattr('1', 'defined') |
-        list) if jenkins_systemctl_environment.stdout else {}
+    jenkins_systemd_service_content: "{{ jenkins_systemd_config.content | b64decode }}"
+
+- name: Discover - Extract EnvironmentFile path from systemd service
+  ansible.builtin.set_fact:
+    env_file_path: >-
+      {{ (jenkins_systemd_service_content.split('\n') |
+          map('trim') |
+          select('match', '^EnvironmentFile=') |
+          map('regex_replace', '^EnvironmentFile=', '') |
+          map('replace', '-', '') |
+          first) | default('')
       }}
+
+- name: Discover - Read EnvironmentFile if defined
+  ansible.builtin.slurp:
+    src: "{{ env_file_path }}"
+  register: env_file_slurped
+  when: env_file_path | length > 0
+  failed_when: false
+
+- name: Discover - Parse all environment variables from systemd config
+  ansible.builtin.set_fact:
+    jenkins_systemd_environment_dict: |
+      {% set env = {} %}
+      {# First, parse the EnvironmentFile if it exists #}
+      {% if env_file_slurped.content is defined %}
+      {% for line in (env_file_slurped.content | b64decode).split('\n') %}
+        {% if line and not line.startswith('#') and '=' in line %}
+          {% set key, value = line.split('=', 1) %}
+          {% set _ = env.update({key.strip(): value.strip().strip('"').strip("'")}) %}
+        {% endif %}
+      {% endfor %}
+      {% endif %}
+      {# Second, parse inline Environment= vars, overwriting file vars #}
+      {% for line in jenkins_systemd_service_content.split('\n') %}
+        {% if line.strip().startswith('Environment=') %}
+          {% set kv_pair = line.strip().replace('Environment=', '', 1) %}
+          {% if '=' in kv_pair %}
+            {% set key, value = kv_pair.split('=', 1) %}
+            {% set _ = env.update({key.strip(): value.strip().strip('"').strip("'")}) %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {{ env | to_json }}
+
+- name: Discover - Load parsed environment variables as dictionary
+  ansible.builtin.set_fact:
+    jenkins_systemd_environment_dict: "{{ jenkins_systemd_environment_dict | from_json }}"
 
 - name: Discover - Extract individual systemd environment variables
   ansible.builtin.set_fact:
