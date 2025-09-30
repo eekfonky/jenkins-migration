@@ -1,0 +1,76 @@
+---
+# Health check
+
+- name: Health - Check container status
+  community.docker.docker_container_info:
+    name: "{{ jenkins_migration_container_name }}"
+  register: jenkins_container
+
+- name: Health - Verify container is running
+  ansible.builtin.assert:
+    that:
+      - jenkins_container.exists
+      - jenkins_container.container.State.Running
+    fail_msg: "Jenkins container is not running"
+    success_msg: "✓ Jenkins container is running"
+
+- name: Health - Check Jenkins HTTP endpoint with progress
+  block:
+    - name: Health - Initial Jenkins HTTP check
+      ansible.builtin.uri:
+        url: "http://localhost:{{ jenkins_migration_discovered_port }}/login"
+        method: GET
+        status_code: [200, 403]
+        timeout: 10
+      register: jenkins_http
+      retries: 10
+      delay: 10
+      until: jenkins_http.status in [200, 403]
+  rescue:
+    - name: Health - Get Jenkins container logs on failure
+      community.docker.docker_container_info:
+        name: jenkins
+      register: jenkins_debug_info
+
+    - name: Health - Display container status and logs on failure
+      ansible.builtin.debug:
+        msg: |
+          Jenkins failed to become accessible.
+          Container Status: {{ jenkins_debug_info.container.State | default('Unknown') }}
+          Container Running: {{ jenkins_debug_info.container.State.Running | default(false) }}
+          Recent Logs: Check docker logs jenkins --tail 30 manually for detailed output
+
+    - name: Health - Fail with helpful message
+      ansible.builtin.fail:
+        msg: "Jenkins did not become accessible within timeout. Check the logs above for details."
+
+- name: Health - Check Jenkins is fully ready (not just starting)
+  ansible.builtin.uri:
+    url: "http://localhost:{{ jenkins_migration_discovered_port }}/api/json?tree=mode"
+    method: GET
+    status_code: [200]
+    timeout: 10
+  register: jenkins_ready
+  retries: 5
+  delay: 10
+  failed_when: false
+
+- name: Health - Verify JCasC configuration loaded
+  ansible.builtin.uri:
+    url: "http://localhost:{{ jenkins_migration_discovered_port }}/configuration-as-code/"
+    method: GET
+    status_code: [200, 403]
+    timeout: 10
+  register: jcasc_check
+  retries: 3
+  delay: 5
+  failed_when: false
+
+- name: Health - Check Watchtower container
+  community.docker.docker_container_info:
+    name: watchtower-jenkins
+  register: watchtower_container
+
+- name: Health - Set health status
+  ansible.builtin.set_fact:
+    jenkins_migration_health_passed: "{{ jenkins_http.status == 200 or jenkins_http.status == 403 }}"

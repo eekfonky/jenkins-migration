@@ -1,0 +1,152 @@
+---
+# Jenkins Discovery - Find and analyze existing Jenkins installation
+
+- name: Discover - Check common Jenkins home directories
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: jenkins_home_candidates
+  loop:
+    - /var/lib/jenkins
+    - /var/jenkins_home
+    - /opt/jenkins
+    - /home/jenkins
+
+- name: Discover - Find Jenkins home with config.xml
+  ansible.builtin.set_fact:
+    jenkins_migration_discovered_home: "{{ item.stat.path }}"
+  when:
+    - item.stat.exists
+    - item.stat.isdir
+    - jenkins_migration_discovered_home is not defined
+  loop: "{{ jenkins_home_candidates.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Discover - Ensure Jenkins home was found
+  ansible.builtin.fail:
+    msg: |
+      No valid Jenkins home directory found.
+
+      Searched locations:
+      {% for result in jenkins_home_candidates.results %}
+      - {{ result.item }}: {% if result.stat.exists %}exists{% else %}not found{% endif %}
+      {% endfor %}
+
+      Expected to find a directory containing {{ jenkins_migration_constants.jenkins_config_file }}
+  when: jenkins_migration_discovered_home is not defined
+
+- name: Discover - Verify config.xml exists
+  ansible.builtin.stat:
+    path: "{{ jenkins_migration_discovered_home }}/{{ jenkins_migration_constants.jenkins_config_file }}"
+  register: jenkins_config_check
+  failed_when: not jenkins_config_check.stat.exists
+
+- name: Discover - Get Jenkins service status
+  ansible.builtin.systemd:
+    name: jenkins
+  register: jenkins_service_status
+  failed_when: false
+
+- name: Discover - Verify Jenkins systemd service exists
+  ansible.builtin.fail:
+    msg: |
+      Jenkins systemd service not found or not loaded.
+
+      This migration requires an existing systemd-managed Jenkins installation.
+
+      Common causes:
+      - Jenkins not installed via package manager
+      - Jenkins service file missing or corrupted
+      - systemd not managing Jenkins (running standalone?)
+
+      Current service status: {{ jenkins_service_status.status | default('not found') }}
+  when: jenkins_service_status.status is not defined or jenkins_service_status.status.LoadState != "loaded"
+
+- name: Discover - Get systemd service file content
+  ansible.builtin.slurp:
+    src: "{{ jenkins_migration_constants.systemd_service_path }}"
+  register: jenkins_systemd_config
+
+- name: Discover - Get Jenkins systemd service facts
+  ansible.builtin.systemd:
+    name: jenkins
+  register: jenkins_systemd_facts
+
+- name: Discover - Get systemd environment variables using systemctl show
+  ansible.builtin.command:
+    cmd: systemctl show jenkins --property=Environment --value
+  register: jenkins_systemctl_environment
+  changed_when: false
+  # ansible-lint command-instead-of-module - No systemd module equivalent for extracting environment variables
+
+- name: Discover - Parse systemctl environment output into dictionary
+  ansible.builtin.set_fact:
+    jenkins_systemd_environment_dict: >-
+      {{
+        dict(jenkins_systemctl_environment.stdout.split() |
+        map('split', '=', 1) |
+        selectattr('1', 'defined') |
+        list) if jenkins_systemctl_environment.stdout else {}
+      }}
+
+- name: Discover - Extract individual systemd environment variables
+  ansible.builtin.set_fact:
+    jenkins_systemd_jenkins_port: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_PORT', '') }}
+    jenkins_systemd_jenkins_https_port: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_HTTPS_PORT', '') }}
+    jenkins_systemd_jenkins_https_keystore: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_HTTPS_KEYSTORE', '') }}
+    jenkins_systemd_jenkins_https_keystore_password: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_HTTPS_KEYSTORE_PASSWORD', '') }}
+    jenkins_systemd_java_opts: >-
+      {{ jenkins_systemd_environment_dict.get('JAVA_OPTS', '') }}
+    jenkins_systemd_jenkins_opts: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_OPTS', '') }}
+    jenkins_systemd_jenkins_home: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_HOME', '') }}
+    jenkins_systemd_jenkins_slave_agent_port: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_SLAVE_AGENT_PORT', '') }}
+    jenkins_systemd_jenkins_webroot: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_WEBROOT', '') }}
+    jenkins_systemd_jenkins_log: >-
+      {{ jenkins_systemd_environment_dict.get('JENKINS_LOG', '') }}
+
+- name: Discover - Set Jenkins configuration with fallbacks
+  ansible.builtin.set_fact:
+    jenkins_migration_discovered_port: >-
+      {{ jenkins_systemd_jenkins_port |
+         default(jenkins_migration_constants.default_http_port) | int }}
+    jenkins_migration_discovered_https_port: >-
+      {{ jenkins_systemd_jenkins_https_port | default('') }}
+    jenkins_migration_discovered_agent_port: >-
+      {{ jenkins_systemd_jenkins_slave_agent_port |
+         default(jenkins_migration_constants.default_agent_port) | int }}
+    jenkins_migration_discovered_keystore: >-
+      {{ jenkins_systemd_jenkins_https_keystore | default('') }}
+    jenkins_migration_discovered_keystore_password: >-
+      {{ jenkins_systemd_jenkins_https_keystore_password | default('') }}
+    jenkins_migration_discovered_java_opts: >-
+      {{ jenkins_systemd_java_opts | default('-Djava.awt.headless=true') }}
+    jenkins_migration_discovered_jenkins_opts: >-
+      {{ jenkins_systemd_jenkins_opts | default('') }}
+    jenkins_migration_discovered_home_env: >-
+      {{ jenkins_systemd_jenkins_home | default('/var/lib/jenkins') }}
+    jenkins_migration_discovered_webroot: >-
+      {{ jenkins_systemd_jenkins_webroot | default('') }}
+    jenkins_migration_discovered_log: >-
+      {{ jenkins_systemd_jenkins_log | default('') }}
+    jenkins_url: >-
+      http://localhost:{{ jenkins_systemd_jenkins_port |
+      default(jenkins_migration_constants.default_http_port) }}
+
+- name: Discover - Get Jenkins user and group
+  ansible.builtin.stat:
+    path: "{{ jenkins_migration_discovered_home }}"
+  register: jenkins_home_stat
+
+- name: Discover - Set Jenkins UID/GID
+  ansible.builtin.set_fact:
+    jenkins_migration_discovered_uid: "{{ jenkins_home_stat.stat.uid }}"
+    jenkins_migration_discovered_gid: "{{ jenkins_home_stat.stat.gid }}"
+

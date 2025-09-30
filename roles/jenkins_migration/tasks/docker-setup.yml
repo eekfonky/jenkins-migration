@@ -1,0 +1,193 @@
+---
+# Setup Docker environment for Jenkins
+
+- name: Docker - Remove conflicting repository configurations first
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/docker.list
+    - /etc/apt/sources.list.d/download_docker_com_linux_ubuntu.list
+    - /etc/apt/keyrings/docker.asc
+  become: true
+
+- name: Docker - Check Docker availability
+  ansible.builtin.command:
+    cmd: docker --version
+  register: docker_version_check
+  failed_when: false
+  changed_when: false
+
+- name: Docker - Check Docker Compose availability
+  ansible.builtin.command:
+    cmd: docker compose version
+  register: docker_compose_check
+  failed_when: false
+  changed_when: false
+
+- name: Docker - Set Docker availability status
+  ansible.builtin.set_fact:
+    docker_available: "{{ docker_version_check.rc == 0 and docker_compose_check.rc == 0 }}"
+
+- name: Docker - Remove old incompatible Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-doc
+      - docker-compose
+      - docker-compose-v2
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+    update_cache: true
+  when: not docker_available
+  become: true
+
+- name: Docker - Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+  when: not docker_available
+  become: true
+
+- name: Docker - Add Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /usr/share/keyrings/docker-archive-keyring.gpg
+    mode: "0644"
+  when: not docker_available
+  become: true
+
+- name: Docker - Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg]
+      https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+    state: present
+  when: not docker_available
+  become: true
+
+- name: Docker - Install Docker Engine
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  when: not docker_available
+  become: true
+
+- name: Docker - Ensure Docker is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+  become: true
+
+- name: Docker - Auto-detect optimal memory settings
+  ansible.builtin.set_fact:
+    jenkins_migration_memory_mb: >-
+      {{ (ansible_memtotal_mb * (jenkins_migration_max_ram_percentage | int) / 100) | int }}
+    jenkins_migration_heap_size: >-
+      {{ ((ansible_memtotal_mb * (jenkins_migration_max_ram_percentage | int) / 100) * 0.8) |
+      int }}m
+
+- name: Docker - Create Jenkins Docker directory
+  ansible.builtin.file:
+    path: "{{ jenkins_migration_docker_dir }}"
+    state: directory
+    owner: "{{ jenkins_migration_discovered_uid | default(1000) }}"
+    group: "{{ jenkins_migration_discovered_gid | default(1000) }}"
+    mode: "0755"
+  become: true
+
+- name: Docker - Generate environment file
+  ansible.builtin.template:
+    src: .env.j2
+    dest: "{{ jenkins_migration_docker_dir }}/.env"
+    mode: "0600"
+    owner: "{{ jenkins_migration_discovered_uid | default(1000) }}"
+    group: "{{ jenkins_migration_discovered_gid | default(1000) }}"
+
+- name: Docker - Generate Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jenkins_migration_docker_dir }}/docker-compose.yml"
+    mode: "0644"
+    validate: docker compose -f %s config
+
+# Inline validation tasks for lean structure
+- name: Docker - Test Jenkins API connectivity
+  ansible.builtin.uri:
+    url: "{{ jenkins_url }}/api/json"
+    method: GET
+    url_username: "{{ jenkins_migration_user }}"
+    url_password: "{{ jenkins_migration_api_token }}"
+    force_basic_auth: true
+    status_code: [200]
+    timeout: "{{ jenkins_migration_timeouts.csrf_crumb }}"
+
+- name: Docker - Verify JCasC file exists and has content
+  ansible.builtin.stat:
+    path: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+  register: jcasc_file
+  failed_when: not jcasc_file.stat.exists or jcasc_file.stat.size == 0
+
+- name: Docker - Verify Docker Compose file exists
+  ansible.builtin.stat:
+    path: "{{ jenkins_migration_docker_dir }}/docker-compose.yml"
+  register: compose_file
+  failed_when: not compose_file.stat.exists
+
+- name: Docker - Parse JCasC YAML syntax
+  ansible.builtin.include_vars:
+    file: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    name: jcasc_config
+  register: yaml_parse
+  failed_when: false
+
+- name: Docker - Validate JCasC against Jenkins schema
+  ansible.builtin.uri:
+    url: "{{ jenkins_url }}/configuration-as-code/validate"
+    method: POST
+    url_username: "{{ jenkins_migration_user }}"
+    url_password: "{{ jenkins_migration_api_token }}"
+    force_basic_auth: true
+    body: "{{ lookup('file', jenkins_migration_docker_dir + '/jenkins.yaml') }}"
+    headers:
+      Content-Type: "text/yaml"
+    status_code: [200, 400]
+    timeout: "{{ jenkins_migration_timeouts.api_request }}"
+  register: jcasc_validation
+  when: yaml_parse is succeeded
+  failed_when: false
+
+- name: Docker - Fail with JCasC-specific error message
+  ansible.builtin.fail:
+    msg: |
+      JCasC Configuration Validation Failed!
+
+      Jenkins rejected the extracted configuration:
+      {{ jcasc_validation.json.message | default('Unknown validation error') }}
+
+      Check your Jenkins plugins and configuration.
+      JCasC file: {{ jenkins_migration_docker_dir }}/jenkins.yaml
+  when:
+    - jcasc_validation is defined
+    - jcasc_validation.status == 400
+
+- name: Docker - Test Docker Compose syntax
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_migration_docker_dir }}"
+    project_name: jenkins-validation
+    state: present
+  check_mode: true
+  register: compose_validation
+  failed_when: compose_validation is failed

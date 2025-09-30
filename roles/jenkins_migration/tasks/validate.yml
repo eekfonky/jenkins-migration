@@ -1,0 +1,55 @@
+---
+# Input Validation - Ensure required variables are properly configured
+
+- name: Validate - Check required vault credentials
+  ansible.builtin.assert:
+    that:
+      - vault_jenkins_migration_user is defined
+      - vault_jenkins_migration_user != "CHANGE_ME"
+      - vault_jenkins_migration_user | length > 0
+      - vault_jenkins_migration_api_token is defined
+      - vault_jenkins_migration_api_token != "CHANGE_ME_TO_YOUR_ACTUAL_API_TOKEN"
+      - vault_jenkins_migration_api_token | length > 10
+    fail_msg: |
+      Jenkins API credentials not configured properly.
+
+      Please set up your credentials:
+      1. ansible-vault edit vars/vault.yml
+      2. Set vault_jenkins_migration_user to your Jenkins username
+      3. Set vault_jenkins_migration_api_token to your Jenkins API token
+
+      To generate an API token:
+      1. Log into Jenkins
+      2. Go to User → Configure → API Token → Add new Token
+    success_msg: "✓ Jenkins API credentials are configured"
+
+- name: Validate - Check Docker directory configuration
+  ansible.builtin.assert:
+    that:
+      - jenkins_migration_docker_dir is defined
+      - jenkins_migration_docker_dir | length > 0
+      - jenkins_migration_docker_dir is match("^/.*")  # Must be absolute path
+    fail_msg: "jenkins_migration_docker_dir must be an absolute path"
+    success_msg: "✓ Docker directory path is valid"
+
+- name: Validate - Check RAM percentage is reasonable
+  ansible.builtin.assert:
+    that:
+      - jenkins_migration_max_ram_percentage | int >= 50
+      - jenkins_migration_max_ram_percentage | int <= 95
+    fail_msg: "jenkins_migration_max_ram_percentage must be between 50-95"
+    success_msg: "✓ RAM percentage is within acceptable range"
+
+- name: Validate - Warn about Docker socket security
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  SECURITY WARNING: Docker socket access is {{ 'ENABLED' if
+         jenkins_migration_enable_docker_socket else 'DISABLED' }}
+
+      {{ 'This grants Jenkins containers root privileges on the host!' if
+         jenkins_migration_enable_docker_socket else
+         'This is the secure default configuration.' }}
+
+      {{ 'Consider using Docker-in-Docker (DinD) or Podman for better security.' if
+         jenkins_migration_enable_docker_socket else '' }}
+  when: jenkins_migration_enable_docker_socket is defined

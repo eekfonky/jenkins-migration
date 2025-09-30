@@ -1,0 +1,47 @@
+---
+# Jenkins Migration - Ultra-lean 3-phase process with JCasC focus
+
+# Pre-flight check
+- name: Check if migration already completed
+  ansible.builtin.stat:
+    path: "{{ jenkins_migration_docker_dir }}/.migration_complete"
+  register: migration_complete_check
+  tags: [always]
+
+- name: Skip if migration already completed
+  ansible.builtin.meta: end_play
+  when: migration_complete_check.stat.exists
+  tags: [always]
+
+# Phase 0: Validate Configuration
+- name: Phase 0 - Validate configuration
+  ansible.builtin.include_tasks: validate.yml
+  tags: [validate, always]
+
+# Phase 1: Prepare (discover, backup, extract, setup, validate)
+- name: Phase 1 - Prepare migration
+  tags: [prepare]
+  block:
+    - ansible.builtin.include_tasks: discover.yml
+    - ansible.builtin.include_tasks: backup.yml
+    - ansible.builtin.include_tasks: api-extract-jcasc.yml
+      when:
+        - jenkins_migration_user is defined
+        - jenkins_migration_api_token is defined
+    - ansible.builtin.include_tasks: docker-setup.yml
+
+# Phase 2: Execute Migration
+- name: Phase 2 - Execute migration
+  ansible.builtin.include_tasks: migrate.yml
+  tags: [migrate]
+
+# Phase 3: Verify
+- name: Phase 3 - Verify migration
+  ansible.builtin.include_tasks: health-check.yml
+  tags: [verify]
+
+- name: Migration - Set completion status
+  ansible.builtin.set_fact:
+    jenkins_migration_completed: true
+  tags: [always]
+

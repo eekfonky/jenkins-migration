@@ -1,0 +1,99 @@
+# Jenkins Docker Compose
+# Generated: {{ ansible_date_time.iso8601 }}
+
+services:
+  # =============================================================================
+  # Jenkins Controller Container
+  # =============================================================================
+  jenkins:
+    image: {{ jenkins_migration_docker_image | default('jenkins/jenkins:lts') }}
+    container_name: {{ jenkins_migration_container_name }}
+    restart: unless-stopped
+    user: "{{ jenkins_migration_discovered_uid }}:{{ jenkins_migration_discovered_gid }}"
+    
+    # Network Configuration
+    ports:
+      - "${JENKINS_PORT}:${JENKINS_PORT}"
+{% if jenkins_migration_discovered_https_port %}
+      - "${JENKINS_HTTPS_PORT}:${JENKINS_HTTPS_PORT}"
+{% endif %}
+      - "${JENKINS_AGENT_PORT}:{{ jenkins_migration_constants.default_agent_port }}"
+    
+    # Volume Mounts
+    volumes:
+      # Jenkins Home - Preserve existing data
+      - "{{ jenkins_migration_discovered_home }}:/var/jenkins_home"
+      # JCasC Configuration
+      - "{{ jenkins_migration_docker_dir }}/jenkins.yaml:{{ jenkins_migration_casc_config_path }}:ro"
+{% if jenkins_migration_enable_docker_socket | default(false) %}
+      # SECURITY WARNING: Docker socket access grants root privileges
+      # Only enable if Jenkins agents absolutely require Docker access
+      # Consider using Docker-in-Docker (DinD) or Podman instead
+      - "{{ jenkins_migration_constants.docker_socket_path }}:{{ jenkins_migration_constants.docker_socket_path }}"
+{% endif %}
+    
+    # Environment Variables
+    environment:
+      # JCasC Configuration
+      CASC_JENKINS_CONFIG: "{{ jenkins_migration_casc_config_path }}"
+{% if jenkins_migration_casc_reload_token is defined %}
+      CASC_RELOAD_TOKEN: "${CASC_RELOAD_TOKEN}"
+{% endif %}
+      
+      # JVM Configuration (discovered from systemd + container optimizations)
+      JAVA_OPTS: >-
+        ${JAVA_OPTS}
+        -Djenkins.install.runSetupWizard=false
+        -XX:MaxRAMPercentage={{ jenkins_migration_max_ram_percentage }}
+      
+      # Jenkins Startup Options (discovered from systemd + network binding)
+      JENKINS_OPTS: >-
+        ${JENKINS_OPTS}
+        --httpListenAddress=0.0.0.0
+        --httpPort=${JENKINS_PORT}
+{% if jenkins_migration_discovered_https_port %}
+        --httpsListenAddress=0.0.0.0
+        --httpsPort=${JENKINS_HTTPS_PORT}
+{% endif %}
+{% if jenkins_migration_discovered_keystore %}
+        --httpsKeyStore={{ jenkins_migration_discovered_keystore | replace(jenkins_migration_discovered_home, '/var/jenkins_home') }}
+{% endif %}
+{% if jenkins_migration_discovered_keystore_password %}
+        --httpsKeyStorePassword=${JENKINS_HTTPS_KEYSTORE_PASSWORD}
+{% endif %}
+      
+      # Jenkins Agent Port
+      JENKINS_SLAVE_AGENT_PORT: "${JENKINS_AGENT_PORT}"
+    
+{% if jenkins_migration_enable_watchtower | default(true) %}
+    labels:
+      - "com.centurylinklabs.watchtower.scope=jenkins-migration"
+{% endif %}
+
+{% if jenkins_migration_enable_watchtower | default(true) %}
+
+  # =============================================================================
+  # Watchtower - Automatic Updates
+  # =============================================================================
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower-jenkins
+    restart: unless-stopped
+    
+    # Volume Mounts
+    volumes:
+      - "{{ jenkins_migration_constants.docker_socket_path }}:{{ jenkins_migration_constants.docker_socket_path }}"
+    
+    # Environment Variables
+    environment:
+      WATCHTOWER_CLEANUP: "{{ jenkins_migration_watchtower_cleanup | string | lower }}"
+      WATCHTOWER_SCHEDULE: "{{ jenkins_migration_watchtower_schedule }}"
+      WATCHTOWER_SCOPE: jenkins-migration
+      WATCHTOWER_NOTIFICATIONS_LEVEL: info
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+    
+    # Labels
+    labels:
+      - "com.centurylinklabs.watchtower.scope=jenkins-migration"
+{% endif %}

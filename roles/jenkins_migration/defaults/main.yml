@@ -1,0 +1,65 @@
+---
+# Jenkins Migration Role - Default Variables
+# These provide sensible defaults, can be overridden in vars/main.yml
+
+# Docker Configuration
+jenkins_migration_docker_dir: /opt/jenkins-docker
+jenkins_migration_container_name: jenkins
+jenkins_migration_docker_image: jenkins/jenkins:lts
+
+# Constants - Replace magic numbers with named values
+jenkins_migration_constants:
+  default_http_port: 8080
+  default_agent_port: 50000  # Jenkins JNLP agent communication port
+  default_uid: 1000
+  default_gid: 1000
+  docker_socket_path: "/var/run/docker.sock"
+  systemd_service_path: "/lib/systemd/system/jenkins.service"
+  jenkins_config_file: "config.xml"
+
+# Jenkins Discovery (auto-discovered, don't override unless needed)
+# jenkins_migration_discovered_home: "" # Discovered at runtime, don't set default
+jenkins_migration_discovered_port: "{{ jenkins_migration_constants.default_http_port }}"
+jenkins_migration_discovered_agent_port: "{{ jenkins_migration_constants.default_agent_port }}"
+jenkins_migration_discovered_uid: "{{ jenkins_migration_constants.default_uid }}"
+jenkins_migration_discovered_gid: "{{ jenkins_migration_constants.default_gid }}"
+
+# Container Resources
+jenkins_migration_max_ram_percentage: "90"
+
+# API Configuration
+jenkins_migration_url: "http://localhost:{{ jenkins_migration_constants.default_http_port }}"
+# jenkins_migration_user: ""  # Required for JCasC extraction (stored in vault)
+# jenkins_migration_api_token: ""  # Required for JCasC extraction (stored in vault)
+
+# JCasC Configuration
+jenkins_migration_casc_config_path: /var/jenkins_config/jenkins.yaml
+
+# Timeout Configuration (seconds)
+jenkins_migration_timeouts:
+  api_request: 120        # API requests timeout
+  container_startup: 300  # Container startup timeout
+  csrf_crumb: 15         # CSRF crumb requests timeout
+  service_stop: 60       # Service stop timeout
+  process_termination: 30 # Process termination timeout
+
+# Security Settings
+jenkins_migration_validate_certs: true # Set to false for self-signed certificates
+jenkins_migration_enable_docker_socket: false # Set to true only if Jenkins agents need Docker access
+jenkins_migration_enable_watchtower: true # Set to false to disable auto-updates
+
+# Watchtower Settings
+jenkins_migration_watchtower_schedule: "0 0 4 * * *"
+jenkins_migration_watchtower_cleanup: true
+
+# State Management (for rollback support)
+jenkins_migration_state_enabled: false
+jenkins_migration_state_dir: "{{ jenkins_migration_docker_dir }}/state"
+
+# Docker Network
+jenkins_migration_docker_network: jenkins-net
+
+# Final Jenkins URL (set during migration)
+jenkins_migration_final_url: >-
+  http://localhost:{{ jenkins_migration_discovered_port |
+  default(jenkins_migration_constants.default_http_port) }}

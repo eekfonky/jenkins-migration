@@ -1,0 +1,66 @@
+---
+argument_specs:
+  main:
+    short_description: "Migrate Jenkins from systemd to Docker with JCasC"
+    description: |
+      This role migrates an existing Jenkins installation from systemd service
+      to Docker containers while preserving all data and configuration.
+    version_added: "1.0.0"
+    author: "Jenkins Migration Team"
+
+    options:
+      jenkins_migration_docker_dir:
+        description: "Directory for Docker configuration files"
+        type: str
+        default: "/opt/jenkins-docker"
+
+      jenkins_migration_container_name:
+        description: "Name for the Jenkins Docker container"
+        type: str
+        default: "jenkins"
+
+      jenkins_migration_docker_network:
+        description: "Docker network name for Jenkins containers"
+        type: str
+        default: "jenkins-network"
+
+      jenkins_migration_memory_limit:
+        description: "Memory limit for Jenkins container"
+        type: str
+        default: "2G"
+
+      jenkins_migration_cpu_limit:
+        description: "CPU limit for Jenkins container"
+        type: str
+        default: "1.0"
+
+      jenkins_migration_watchtower_enabled:
+        description: "Enable Watchtower for automatic updates"
+        type: bool
+        default: true
+
+      jenkins_migration_watchtower_schedule:
+        description: "Cron schedule for Watchtower updates"
+        type: str
+        default: "0 0 4 * * *"
+
+      jenkins_migration_url:
+        description: "Jenkins URL for API access (optional)"
+        type: str
+        default: ""
+
+      jenkins_migration_user:
+        description: "Jenkins admin username for API access (optional)"
+        type: str
+        default: ""
+
+      jenkins_migration_api_token:
+        description: "Jenkins API token for admin user (optional)"
+        type: str
+        default: ""
+        no_log: true
+
+      jenkins_migration_rollback_mode:
+        description: "Perform rollback to systemd instead of migration"
+        type: bool
+        default: false

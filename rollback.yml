@@ -1,0 +1,65 @@
+---
+# Jenkins Rollback - Docker to Systemd
+# Simple rollback without overcomplicated phases
+
+- name: Jenkins Rollback to Systemd
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  connection: "{{ 'local' if target_hosts is not defined else omit }}"
+
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    - name: Rollback - Discover Jenkins port from systemd
+      block:
+        - name: Rollback - Get systemd service file content
+          ansible.builtin.slurp:
+            src: "/lib/systemd/system/jenkins.service"
+          register: jenkins_systemd_config
+          failed_when: false
+
+        - name: Rollback - Parse Jenkins port
+          ansible.builtin.set_fact:
+            jenkins_migration_rollback_port: "{{ ((jenkins_systemd_config.content | b64decode | regex_search('HTTP_PORT=([0-9]+)',
+              '\\1')) or ['8080']) | first | int }}"
+          when: jenkins_systemd_config.content is defined
+
+    - name: Rollback - Set default port if discovery failed
+      ansible.builtin.set_fact:
+        jenkins_migration_rollback_port: 8080
+      when: jenkins_migration_rollback_port is not defined
+
+    - name: Rollback - Stop Docker containers
+      community.docker.docker_compose_v2:
+        project_src: "{{ jenkins_migration_docker_dir }}"
+        project_name: jenkins-migration
+        state: absent
+        remove_orphans: true
+      failed_when: false
+
+    - name: Rollback - Enable systemd Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        enabled: true
+        daemon_reload: true
+
+    - name: Rollback - Start systemd Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: started
+
+    - name: Rollback - Verify Jenkins is running
+      ansible.builtin.systemd:
+        name: jenkins
+      register: jenkins_status
+      failed_when: jenkins_status.status.ActiveState != "active"
+
+    - name: Rollback - Display status
+      ansible.builtin.debug:
+        msg: >-
+          Rollback complete
+          | Jenkins service: {{ jenkins_status.status.ActiveState }}
+          | Jenkins URL: http://{{ ansible_default_ipv4.address | default('localhost') }}:{{ jenkins_migration_rollback_port
+          }}

@@ -1,0 +1,65 @@
+---
+# Execute migration
+
+- name: Migrate - Stop Jenkins systemd service
+  ansible.builtin.systemd:
+    name: jenkins
+    state: stopped
+    enabled: false
+  register: systemd_stop
+
+- name: Migrate - Wait for Jenkins to fully stop
+  ansible.builtin.wait_for:
+    port: "{{ jenkins_migration_discovered_port }}"
+    state: stopped
+    timeout: "{{ jenkins_migration_timeouts.service_stop }}"
+
+- name: Migrate - Ensure Jenkins process fully terminated
+  ansible.builtin.wait_for:
+    path: /proc/{{ ansible_facts.services.jenkins.pid | default('') }}/status
+    state: absent
+    timeout: "{{ jenkins_migration_timeouts.process_termination }}"
+  failed_when: false
+  when: ansible_facts.services.jenkins.pid is defined
+
+- name: Migrate - Start Jenkins with Docker Compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_migration_docker_dir }}"
+    project_name: jenkins-migration
+    state: present
+    wait: false
+  register: docker_start
+
+- name: Migrate - Give containers time to start
+  ansible.builtin.pause:
+    seconds: 10
+    prompt: "Waiting for containers to initialize..."
+
+- name: Migrate - Wait for Jenkins HTTP to respond
+  ansible.builtin.wait_for:
+    port: "{{ jenkins_migration_discovered_port }}"
+    host: localhost
+    delay: 5
+    timeout: "{{ jenkins_migration_timeouts.container_startup }}"
+    msg: "Jenkins did not start within {{ jenkins_migration_timeouts.container_startup // 60 }} minutes"
+
+- name: Migrate - Wait for Jenkins to be fully ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ jenkins_migration_discovered_port }}/login"
+    status_code: [200, 403]
+  register: result
+  until: result.status in [200, 403]
+  retries: 30
+  delay: 10
+
+- name: Migrate - Set completion flag
+  ansible.builtin.set_fact:
+    jenkins_migration_completed: true
+
+- name: Migrate - Create migration completion marker
+  ansible.builtin.file:
+    path: "{{ jenkins_migration_docker_dir }}/.migration_complete"
+    state: touch
+    modification_time: preserve
+    access_time: preserve
+    mode: "0644"

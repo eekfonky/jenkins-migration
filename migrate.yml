@@ -1,0 +1,34 @@
+---
+# Jenkins Migration - Systemd to Docker with JCasC
+# Lean implementation following 2025 best practices
+
+- name: Jenkins Migration to Docker
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  connection: "{{ 'local' if target_hosts is not defined else omit }}"
+
+  vars_files:
+    - vars/main.yml
+    - vars/vault.yml
+
+  pre_tasks:
+    - name: Install required Ansible collections
+      ansible.builtin.command:
+        cmd: >-
+          ansible-galaxy collection install
+          community.docker:>=3.4.0 community.general:>=7.0.0 ansible.posix:>=1.5.0 --force
+      delegate_to: localhost
+      run_once: true
+      become: false
+      changed_when: false
+
+  roles:
+    - jenkins_migration
+
+  post_tasks:
+    - name: Migration complete
+      ansible.builtin.set_fact:
+        jenkins_url: "http://{{ ansible_default_ipv4.address | default('localhost') }}:{{ jenkins_migration_discovered_port
+          | default(8080) }}"
+      when: jenkins_migration_completed | default(false)

@@ -1,291 +1,283 @@
-# Jenkins Migration Tool
+# How to Migrate Jenkins from Systemd to Docker
 
-**Lift-and-shift Jenkins from systemd to Docker** with zero downtime and complete data preservation.
+This guide shows you how to migrate your existing Jenkins installation from systemd to Docker using Ansible automation, while preserving all your data and configurations.
 
-## 🚀 Quick Start
+## Prerequisites
+
+Before starting, ensure you have:
+
+- **Linux server** running Ubuntu 20.04+ (or similar)
+- **Existing Jenkins** running via systemd service
+- **Jenkins admin access** with API token
+- **Ansible 2.14+** installed with sudo privileges
+- **Internet connection** for downloading Docker and dependencies
+
+## Step 1: Get Your Jenkins API Token
+
+1. Log into your Jenkins web interface
+2. Go to **Your Username** → **Configure** → **API Token**
+3. Click **Add new Token**, give it a name, and **Generate**
+4. **Copy the token** - you'll need it in the next step
+
+## Step 2: Configure Secure Credentials
+
+**🔐 SECURITY UPDATE**: Credentials are now stored in an encrypted Ansible Vault for security.
+
+### Set Up Your Encrypted Credentials
+
+1. **Edit the encrypted vault file**:
+```bash
+ansible-vault edit vars/vault.yml
+```
+
+2. **Set your Jenkins credentials** (replace the CHANGE_ME values):
+```yaml
+---
+# Jenkins API Credentials (Required)
+vault_jenkins_migration_user: "your-jenkins-username"
+vault_jenkins_migration_api_token: "your-api-token-from-step-1"
+
+# Optional: Only if Jenkins uses HTTPS with a Java keystore directly
+# (Not needed if using HTTP or behind a reverse proxy like Nginx/Apache)
+# vault_jenkins_migration_keystore_password: "ssl-keystore-password"
+```
+
+3. **Save and exit** your editor
+
+### Vault Password
+
+**🔒 SECURITY UPDATE**: The vault has been secured with a strong, randomly-generated password.
+
+The vault password has been saved to: `.vault_pass` (already in .gitignore)
+
+**⚠️ IMPORTANT SECURITY STEPS**:
+
+1. **Save the password securely** (password manager, secure vault, etc.):
+```bash
+cat .vault_pass  # Copy this password to a secure location
+```
+
+2. **Keep the .vault_pass file secure** (it has 600 permissions and is in .gitignore)
+
+3. **To change the vault password in the future**:
+```bash
+ansible-vault rekey vars/vault.yml
+```
+
+**Never commit the vault password to version control!**
+
+## Step 3: Install Required Dependencies
 
 ```bash
-# Configure Jenkins API access (optional - can auto-detect most settings)
-vi jenkins-migrate.conf
+# Install Ansible collections
+ansible-galaxy collection install -r requirements.yml
 
-# Run migration (requires sudo for systemctl operations)
-sudo ./jenkins-migrate.sh
+# Verify installation
+ansible-galaxy collection list community.docker
 ```
 
-**What happens:** Jenkins data stays exactly the same, just switches from systemd to Docker runtime with automated updates and better disaster recovery.
+## Step 4: Run the Migration
 
-## Features
+### Execute the Migration
 
-- **Lift & Shift**: Preserves all users, jobs, and data via `$JENKINS_HOME` volume mount
-- **Auto-Docker**: Installs Docker CE automatically if missing
-- **JCasC Live**: Generates Configuration as Code from live Jenkins schema
-- **Watchtower**: Daily 4am updates for security patches
-- **Config Generation**: Uses `envsubst` for Docker configuration and live schema for JCasC
-
-## Configuration
-
-Edit `jenkins-migrate.conf`:
+Run the migration playbook with vault password:
 
 ```bash
-JENKINS_URL="http://localhost:8080"
-JENKINS_USER="your_username" 
-JENKINS_API_TOKEN="your_api_token"
+ansible-playbook migrate.yml --ask-vault-pass
 ```
 
-## 📖 Step-by-Step Migration Walkthrough
+**🔑 You'll be prompted for the vault password** (check `.vault_pass` or your secure storage)
 
-When you run `sudo ./jenkins-migrate.sh`, here's exactly what happens:
+This will:
+1. **Validate** your configuration and credentials
+2. **Discover** your Jenkins installation and settings
+3. **Backup** critical systemd configuration files
+4. **Extract** your current Jenkins configuration via API
+5. **Setup** Docker environment and validate configurations
+6. **Migrate** by stopping systemd and starting Docker
+7. **Verify** the migration was successful
 
-### **Phase 1: Pre-flight Validation** ✈️
-```
-🔍 Jenkins Migration Tool v1.0
-==========================================
+### Alternative: Store Vault Password in File
 
-⚡ Phase 1: Environment Validation
-├─ ✅ Running as root (sudo detected)
-├─ ✅ Jenkins user found: jenkins (uid=112, gid=117)
-├─ ✅ Jenkins user in docker group
-├─ ✅ Docker daemon running (version 24.0.6)
-├─ ✅ Docker Compose available (v2.21.0)
-└─ ✅ All prerequisites met
+For automation, create a password file:
+```bash
+# Store your secure password in a file (replace with your actual password)
+echo "your-secure-vault-password" > .vault_pass
+chmod 600 .vault_pass
+ansible-playbook migrate.yml --vault-password-file .vault_pass
 
-🔍 Phase 2: Discovery & Detection
-├─ 🏠 Jenkins Home: /var/lib/jenkins (87GB used)
-├─ 👤 Jenkins User: 112:117 (jenkins:jenkins)
-├─ 🌐 Jenkins URL: http://localhost:8080
-├─ 🔌 Agent Port: 50000
-├─ ⚙️  Service Status: active (running)
-└─ 📦 Plugins Found: 47 active plugins detected
+# IMPORTANT: Add .vault_pass to .gitignore to prevent accidental commits
+echo ".vault_pass" >> .gitignore
 ```
 
-### **Phase 2: Configuration Generation** 🛠️
-```
-⚙️  Phase 3: Generating Docker Configuration
-├─ 📁 Creating /opt/jenkins-docker/ (owned by jenkins:jenkins)
-├─ 🐳 Generating docker-compose.yml from template...
-├─ 🔌 Extracting plugins via Jenkins API...
-│   └─ ✅ 47 plugins written to plugins.txt
-├─ ⚙️  Generating jenkins.yaml (JCasC) from live schema...
-└─ ✅ All configuration files generated
-```
+## Step 5: Verify Migration Success
 
-### **Phase 3: Service Transition** 🔄
-```
-🔄 Phase 4: Service Migration
-├─ ⏹️  Stopping systemd Jenkins service...
-├─ 🚫 Disabling systemd auto-start...
-└─ 🐳 Starting Docker containers...
-
-     ┌─────────┐         ┌─────────┐
-     │systemd  │  ════►  │ Docker  │
-     │Jenkins  │         │Jenkins  │  
-     └─────────┘         └─────────┘
-        (OFF)              (READY)
-```
-
-### **Phase 4: Health Verification** 🏥
-```
-🏥 Phase 5: Health Check & Verification
-├─ 🌐 Testing http://localhost:8080/login...
-├─ 🔍 Verifying Jenkins home mount...
-├─ 👥 Verifying user data preserved...
-└─ ✅ Migration verification complete
-
-🎉 SUCCESS! Jenkins Migration Complete!
-```
-
-### **Migration Summary**
-```
-    BEFORE                    AFTER
-┌─────────────┐          ┌─────────────┐
-│   systemd   │          │   Docker    │
-│  ┌───────┐  │   ════►  │  ┌───────┐  │
-│  │Jenkins│  │          │  │Jenkins│  │
-│  │ :8080 │  │          │  │ :8080 │  │
-│  └───┬───┘  │          │  └───┬───┘  │
-│      │      │          │      │      │
-│ /var/lib/   │          │ /var/lib/   │ 
-│  jenkins    │          │  jenkins    │
-└─────────────┘          └─────┬───────┘
-                               │
-                         ┌─────────┐
-                         │Watchtower│
-                         │ (4am)   │
-                         └─────────┘
-
-🎯 Same Jenkins, Same Data, Modern Platform!
-```
-
-**Result:** Same URL, same login, same everything - but now with automated updates and better DR!
-
-## File Structure
-
-```
-├── jenkins-migrate.sh          # Main script
-├── jenkins-migrate.conf        # Configuration
-├── lib/                        # Core libraries
-├── modules/                    # Feature modules
-├── templates/                  # Config templates
-└── scripts/                    # Helper scripts
-```
-
-## User Preservation
-
-**All existing users are preserved** - no admin password needed.
-
-Your current user and API token work exactly the same after migration via `$JENKINS_HOME` volume mount.
-
-## Docker Integration
-
-- **Official Installation**: Follows Ubuntu Docker documentation
-- **Docker Compose v2**: Modern format without deprecated version field
-- **Health Checks**: Built-in container monitoring
-- **Auto-Start**: Docker daemon started automatically
-
-## Watchtower Updates
-
-- **Schedule**: Daily at 4:00 AM
-- **Target**: Jenkins container only
-- **Cleanup**: Removes old images automatically
-- **Future-Proof**: Ready for JDK 21 when Jenkins LTS switches
-
-## Rollback
+### Check Jenkins is Running
 
 ```bash
-sudo ./jenkins-migrate.sh --rollback
+# Check containers are running
+docker compose -f /opt/jenkins-docker/docker-compose.yml ps
+
+# Check Jenkins logs
+docker logs jenkins
+
+# Access Jenkins web interface (same URL as before)
+# Your Jenkins should be accessible at the same address
 ```
 
-Restores systemd Jenkins service and stops Docker containers.
+### Verify Your Data
 
-## Requirements
+- ✅ All jobs should be present
+- ✅ All plugins should be installed  
+- ✅ All configurations should be preserved
+- ✅ Build history should be intact
 
-- Ubuntu 18.04+
-- 2GB+ RAM
-- sudo access
-- Existing Jenkins systemd service
+## Step 6: Post-Migration Configuration (Optional)
 
-Docker will be installed automatically if missing.
+### Update JCasC Configuration
 
-## 📦 Post-Migration: Plugin Management (Official 2025 Method)
+After migration, you can modify Jenkins using Configuration as Code:
 
-The migration generates a **custom Jenkins Docker image** with `plugins.txt` support using the **official Jenkins Docker approach**:
+1. **Edit** `/opt/jenkins-docker/jenkins.yaml`
+2. **Reload** configuration:
 
-### Initial Migration Experience
-- ✅ **Zero changes needed** - Existing plugins work immediately via volume mount
-- ✅ **No rebuilding required** - All plugins preserved in `${JENKINS_HOME}`  
-- ✅ **Same lift-and-shift experience** - Everything works as before
-
-### Modern Plugin Management (Infrastructure as Code)
 ```bash
-# View extracted plugins (generated from your current installation)
-cat plugins.txt
+# Method 1: Via API
+curl -X POST "http://localhost:8080/reload-configuration-as-code/"
 
-# Example plugins.txt format:
-git:4.8.3
-workflow-aggregator:2.6
-pipeline-stage-view:2.25
-build-timeout:1.27
+# Method 2: Via Ansible
+ansible-playbook migrate.yml --tags jcasc-reload
 ```
 
-### Adding New Plugins
-```bash
-# 1. Edit plugins.txt to add new plugins
-vi plugins.txt
+### Manage Container Updates
 
-# Add new plugin with version
-echo "blueocean:1.25.2" >> plugins.txt
-
-# 2. Rebuild Jenkins image with new plugins
-docker compose build jenkins
-
-# 3. Restart with updated image
-docker compose up -d --force-recreate jenkins
-```
-
-### Updating Plugin Versions
-```bash
-# 1. Update specific plugin versions in plugins.txt
-sed -i 's/git:4.8.3/git:4.8.4/' plugins.txt
-
-# 2. Rebuild and restart
-docker compose build jenkins
-docker compose up -d --force-recreate jenkins
-
-# 3. Monitor plugin installation
-docker logs -f jenkins
-```
-
-### JCasC Plugin Configuration
-```bash
-# Plugin-specific settings go in JCasC config
-vi /var/lib/jenkins/casc_configs/jenkins.yaml
-
-# Example: Configure Git plugin
-unclassified:
-  gitPlugin:
-    globalConfigName: "Jenkins CI"
-    globalConfigEmail: "jenkins@company.com"
-```
-
-### Plugin Rollback Strategy
-```bash
-# Backup current plugins.txt before changes
-cp plugins.txt plugins.txt.backup
-
-# If issues occur, restore and restart
-mv plugins.txt.backup plugins.txt
-docker compose restart jenkins
-```
-
-### Best Practices
-- ✅ **Official Jenkins 2025 methodology** - Uses `build:` approach
-- ✅ **Infrastructure as Code** - Version controlled plugins with git
-- ✅ **Reproducible deployments** - Exact same environment every time
-- ✅ **Git-based rollback** - Easy to revert plugin changes
-- ✅ **No manual docker exec** - Pure Docker Compose workflow
-- **Version Pin**: Always specify versions in plugins.txt (avoid `:latest`)
-- **Test Changes**: Update staging environment first
-- **Monitor Logs**: Watch `docker logs jenkins` during updates
-- **JCasC First**: Configure plugins via JCasC when possible
-- **Backup Config**: Version control your plugins.txt and jenkins.yaml
-
+Watchtower automatically updates your Jenkins container daily at 4 AM.
 
 ## Troubleshooting
 
-General commands for inspecting the state of the new Dockerized Jenkins:
+### If Migration Fails
+
+**Don't panic!** Your original Jenkins is preserved. You can:
+
+1. **Check logs**: `docker logs jenkins`
+2. **Rollback**: Run the rollback playbook to restore systemd service
 
 ```bash
-# View live logs from the Jenkins container
-docker logs -f jenkins
-
-# Check the status of all migration-related containers
-docker compose -f /opt/jenkins-docker/docker-compose.yml ps
-
-# Restart the Jenkins container
-docker restart jenkins
+ansible-playbook rollback.yml
 ```
 
-### JCasC Validation Failures
+### Common Issues
 
-If the migration fails during the "high-fidelity validation" step, it means the JCasC configuration generated from your old Jenkins is not compatible with the new Docker environment.
+| Problem | Solution |
+|---------|----------|
+| "API token invalid" | Regenerate token in Jenkins, update encrypted vault: `ansible-vault edit vars/vault.yml` |
+| "Port 8080 in use" | Stop other services using port 8080 first |
+| "Permission denied" | Ensure you have sudo access |
+| "Docker not found" | Let the playbook install Docker automatically |
+| "Jenkins not responding" | Wait 2-3 minutes for startup, then check `docker logs jenkins` |
 
-Here's how to debug this:
+## How to Rollback
 
-1.  **Examine the logs:** In the output of the `jenkins-migrate.sh` script, look for a section that starts with `--- DOCKER LOGS ---`. This section will contain the exact error message from Jenkins as it tried to load your configuration.
+If you need to return to systemd Jenkins:
 
-2.  **Identify the problem:** The error will typically be a `ConfigurationAsCodeException`. For example:
-    *   `io.jenkins.plugins.casc.ConfiguratorException: 'credentials' is not a valid configuration for 'jenkins'`
-    *   `No such DSL method 'pipelineTriggers' found among steps`
+```bash
+ansible-playbook rollback.yml
+```
 
-3.  **Fix the configuration:**
-    *   The generated configuration file that needs editing is located at `/opt/jenkins-docker/jenkins.yaml`.
-    *   You can open this file and try to fix the error based on the log message.
-    *   After editing the file, you can quickly test your fix by running the validation script manually:
-        ```bash
-        sudo ./scripts/validate-casc.sh --docker /opt/jenkins-docker/jenkins.yaml
-        ```
-    *   Once the manual validation passes, you can re-run `sudo ./jenkins-migrate.sh`. The script will regenerate the configuration, so if the error was due to a problem in the `enhance_jcasc.py` script, you may need to fix the script itself.
+This will:
+- Stop Docker containers
+- Re-enable systemd Jenkins service
+- Start Jenkins via systemd
+- Your original configuration is fully restored
 
----
+## Files Created During Migration
 
-**Ready?** Run `sudo ./jenkins-migrate.sh` to migrate your Jenkins to modern Docker infrastructure with automated updates.
+The migration creates these files in `/opt/jenkins-docker/`:
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Container definitions (Jenkins + Watchtower) |
+| `jenkins.yaml` | Your Jenkins configuration as code |
+| `plugins.txt` | List of installed plugins |
+| `.env` | **Sensitive environment variables** (permissions: 600) |
+| `backup/` | Backup of original systemd configurations |
+
+### Environment Variables (.env)
+
+The `.env` file contains sensitive values like:
+- `CASC_RELOAD_TOKEN` - Token for reloading Jenkins configuration
+- `JENKINS_HTTPS_KEYSTORE_PASSWORD` - SSL keystore password (if using HTTPS)
+
+**Security Notes:**
+- The `.env` file has restricted permissions (600)
+- It's automatically excluded from version control
+- Store a backup of these values in a secure password manager
+- To rotate tokens, edit `.env` and restart the container
+
+## Security Features
+
+- 🔒 **Encrypted credentials**: All sensitive data stored in Ansible Vault
+- 🔒 **Input validation**: Configuration validated before migration starts
+- 🔒 **Docker socket security**: Disabled by default with clear warnings when enabled
+- 🔒 **Data preservation**: Original `JENKINS_HOME` mounted safely
+- 🔒 **Error handling**: Specific error conditions instead of broad ignores
+- 🔒 **Backup system**: Original configurations backed up before migration
+- 🔒 **Rollback capability**: Complete restoration to original state
+- 🔒 **No hardcoded secrets**: All magic numbers replaced with named constants
+
+## Advanced Configuration
+
+### Run on Remote Hosts
+
+By default, the playbook runs on localhost. To run on remote hosts, use an inventory:
+
+```bash
+# Create inventory file
+echo "[jenkins_servers]" > my-hosts.yml
+echo "jenkins-server-1.example.com" >> my-hosts.yml
+
+# Run with custom inventory
+ansible-playbook -i my-hosts.yml migrate.yml --extra-vars "target_hosts=jenkins_servers"
+```
+
+### Disable Docker Socket Access (Recommended)
+
+For maximum security, Jenkins containers run without Docker socket access by default. If you need Docker-in-Docker for agents:
+
+```yaml
+# In vars/main.yml - Enable only if needed for Docker agents
+jenkins_migration_enable_docker_socket: true
+```
+
+### Customize Resource Limits
+
+```yaml
+# In vars/main.yml - Adjust container resources
+jenkins_migration_max_ram_percentage: "90"  # Use 90% of system RAM
+```
+
+### Change Migration Directory
+
+```yaml
+# In vars/main.yml - Custom Docker directory
+jenkins_migration_docker_dir: "/custom/path/jenkins-docker"
+```
+
+## What This Migration Does NOT Do
+
+- ❌ **Modify Jenkins configuration** - Your Jenkins stays exactly as configured
+- ❌ **Change Jenkins URL** - Same address as before
+- ❌ **Alter job configurations** - All jobs preserved unchanged  
+- ❌ **Remove original data** - `JENKINS_HOME` is completely preserved
+- ❌ **Change user access** - All users and permissions preserved
+
+## Support
+
+If you encounter issues:
+
+1. **Check syntax**: `ansible-playbook --syntax-check migrate.yml`
+2. **Validate YAML**: `yamllint migrate.yml`
+3. **Run with verbose**: `ansible-playbook migrate.yml -vvv`
+4. **Review logs**: Check both Ansible output and `docker logs jenkins`
+
+Your Jenkins data is always safe - the migration only changes how Jenkins runs, not what it contains.

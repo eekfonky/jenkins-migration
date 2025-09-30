@@ -1,0 +1,84 @@
+---
+# JCasC Configuration Reload Task
+# Post-migration configuration reload using Jenkins Configuration as Code API
+
+- name: JCasC Reload - Wait for Jenkins to be accessible
+  ansible.builtin.uri:
+    url: "{{ jenkins_migration_final_url | default('http://localhost:8080') }}/login"
+    method: GET
+    status_code: [200, 403] # 403 is OK, means Jenkins is up but security is enabled
+    timeout: 10
+  register: jenkins_accessibility_check
+  retries: 30
+  delay: 10
+  until: jenkins_accessibility_check.status in [200, 403]
+
+- name: JCasC Reload - Reload configuration via API (with token)
+  ansible.builtin.uri:
+    url: "{{ jenkins_migration_final_url | default('http://localhost:8080') }}/reload-configuration-as-code/"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      casc-reload-token: "{{ jenkins_migration_casc_reload_token }}"
+    status_code: [200, 302] # 302 redirect is normal after successful reload
+    timeout: 30
+  register: jcasc_reload_result
+  when: jenkins_migration_casc_reload_token is defined
+  failed_when: false # Don't fail the entire migration on reload issues
+
+- name: JCasC Reload - Reload configuration via CLI (fallback)
+  community.docker.docker_container_exec:
+    container: "{{ jenkins_migration_container_name | default('jenkins') }}"
+    command: >-
+      java -jar /usr/share/jenkins/jenkins-cli.jar
+      -s {{ jenkins_migration_final_url | default('http://localhost:8080') }}
+      reload-jcasc-configuration
+    user: jenkins
+  register: jcasc_cli_reload_result
+  when:
+    - jenkins_migration_casc_reload_token is not defined
+    - jcasc_reload_result is not defined or jcasc_reload_result.status | default(0) not in [200, 302]
+  failed_when: false
+
+- name: JCasC Reload - Wait for configuration to be applied
+  ansible.builtin.pause:
+    seconds: 5
+  when: (jcasc_reload_result.status | default(0) in [200, 302]) or (jcasc_cli_reload_result.rc | default(1) == 0)
+
+- name: JCasC Reload - Verify Jenkins is still accessible after reload
+  ansible.builtin.uri:
+    url: "{{ jenkins_migration_final_url | default('http://localhost:8080') }}/api/json"
+    method: GET
+    status_code: [200, 403]
+    timeout: 10
+  register: post_reload_check
+  retries: 5
+  delay: 5
+  until: post_reload_check.status in [200, 403]
+
+- name: JCasC Reload - Set reload status facts
+  ansible.builtin.set_fact:
+    jenkins_migration_config_reloaded: >-
+      {{
+        (jcasc_reload_result.status | default(0) in [200, 302]) or
+        (jcasc_cli_reload_result.rc | default(1) == 0)
+      }}
+    jenkins_migration_reload_method: >-
+      {{
+        'api-token' if (jcasc_reload_result.status | default(0) in [200, 302])
+        else ('cli' if (jcasc_cli_reload_result.rc | default(1) == 0)
+        else 'failed')
+      }}
+
+
+- name: JCasC Reload - Fail if reload failed
+  ansible.builtin.fail:
+    msg: "JCasC configuration reload failed!"
+  when: not jenkins_migration_config_reloaded | default(false)
+
+# Set migration metadata for reporting
+- name: JCasC Reload - Update migration status
+  ansible.builtin.set_fact:
+    jenkins_migration_jcasc_reload_attempted: true
+    jenkins_migration_jcasc_reload_successful: "{{ jenkins_migration_config_reloaded | default(false) }}"
+    jenkins_migration_jcasc_reload_timestamp: "{{ ansible_date_time.iso8601 }}"

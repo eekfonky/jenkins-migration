@@ -1,0 +1,21 @@
+---
+# Jenkins Migration Configuration
+# Only essential variables for lift-and-shift migration
+
+# Jenkins API Credentials (Retrieved from encrypted vault)
+# Edit encrypted credentials: ansible-vault edit vars/vault.yml
+jenkins_migration_user: "{{ vault_jenkins_migration_user }}"
+jenkins_migration_api_token: "{{ vault_jenkins_migration_api_token }}"
+
+# Docker Configuration
+jenkins_migration_docker_dir: "/opt/jenkins-docker"
+jenkins_migration_container_name: "jenkins"
+
+# Container Resources (dedicated hosts)
+jenkins_migration_max_ram_percentage: "90" # Dedicated host - can use more RAM
+
+# JCasC Reload Token (for post-migration config updates)
+jenkins_migration_casc_reload_token: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+# Watchtower Configuration (always enabled)
+jenkins_migration_watchtower_schedule: "0 0 4 * * *" # 4 AM daily

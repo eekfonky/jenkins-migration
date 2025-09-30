@@ -1,0 +1,209 @@
+---
+# Jenkins Migration Role - Internal Variables
+# These variables should not be overridden by users
+
+#############################
+# Migration Phases
+#############################
+
+jenkins_migration_phases:
+  - name: validate_environment
+    description: "Environment validation and prerequisites"
+    tags: [validation, always]
+  - name: discover_jenkins
+    description: "Jenkins installation discovery"
+    tags: [discovery]
+  - name: generate_configs
+    description: "Docker configuration generation"
+    tags: [config-generation]
+  - name: migrate_service
+    description: "Service migration execution"
+    tags: [migration]
+  - name: verify_migration
+    description: "Post-migration verification"
+    tags: [verification]
+
+#############################
+# System Discovery Paths
+#############################
+
+# Common Jenkins home directory locations
+jenkins_migration_common_home_paths:
+  - /var/lib/jenkins
+  - /home/jenkins
+  - /opt/jenkins
+  - /usr/local/jenkins
+
+# Common Jenkins systemd service paths
+jenkins_migration_systemd_service_paths:
+  - /usr/lib/systemd/system/jenkins.service
+  - /etc/systemd/system/jenkins.service
+  - /lib/systemd/system/jenkins.service
+
+# Common Jenkins environment file paths
+jenkins_migration_env_file_paths:
+  - /etc/default/jenkins
+  - /etc/sysconfig/jenkins
+
+#############################
+# Required System Packages
+#############################
+
+# Required packages for installation
+jenkins_migration_required_packages:
+  - curl
+  - jq
+  - python3
+  - python3-pip
+
+# Required commands to check with 'which'
+jenkins_migration_required_commands:
+  - curl
+  - jq
+  - python3
+  - pip3
+
+# Docker packages for different distributions
+jenkins_migration_docker_packages:
+  Ubuntu: docker-ce
+  Debian: docker-ce
+  CentOS: docker-ce
+  RedHat: docker-ce
+
+#############################
+# File Patterns and Extensions
+#############################
+
+# Jenkins plugin file extensions
+jenkins_migration_plugin_extensions:
+  - "*.hpi"
+  - "*.jpi"
+
+# Configuration file patterns
+jenkins_migration_config_patterns:
+  - "config.xml"
+  - "*.xml"
+  - "*.groovy"
+  - "*.yaml"
+  - "*.yml"
+
+# Log file patterns
+jenkins_migration_log_patterns:
+  - "*.log"
+  - "*.out"
+
+#############################
+# Docker Configuration
+#############################
+
+# Required Docker Compose version (v2.x)
+jenkins_migration_min_docker_compose_version: "2.20.0"
+
+# Docker images to pre-pull
+jenkins_migration_docker_images:
+  - "{{ jenkins_migration_docker_image }}"
+  - containrrr/watchtower
+
+# Docker network configuration
+jenkins_migration_docker_network_config:
+  driver: bridge
+  name: "{{ jenkins_migration_docker_network }}"
+
+#############################
+# API Endpoints and Paths
+#############################
+
+# Jenkins API endpoints
+jenkins_migration_api_endpoints:
+  plugin_manager: "/pluginManager/api/json?depth=1"
+  jcasc_export: "/configuration-as-code/export"
+  system_info: "/api/json"
+  crumb: "/crumbIssuer/api/json"
+  health: "/login"
+
+# NOTE: Deprecated JCasC configurations are now handled by JCasC built-in
+# deprecated handling via 'configuration-as-code: deprecated: warn'
+# No manual regex cleanup is needed
+
+# JCasC validation paths
+jenkins_migration_jcasc_validation:
+  container_name_prefix: "jcasc-validator"
+  temp_dir_prefix: "jenkins-migration"
+  validation_timeout: 120 # seconds
+
+#############################
+# Error Handling
+#############################
+
+# Retry configuration
+jenkins_migration_retry_config:
+  count: 3
+  delay: 10 # seconds
+
+# Critical failure conditions that trigger rollback
+jenkins_migration_critical_failures:
+  - container_start_failure
+  - mount_point_failure
+  - network_failure
+  - permission_failure
+
+#############################
+# Template Processing
+#############################
+
+# Template file mappings (source -> destination)
+jenkins_migration_template_files:
+  docker-compose.yml.j2: docker-compose.yml
+  docker.env.j2: .env
+  Dockerfile.j2: Dockerfile
+  jenkins.yml.j2: jenkins.yaml
+
+# Template validation patterns
+jenkins_migration_template_validation:
+  required_sections:
+    - services
+    - networks
+  required_variables:
+    - jenkins_migration_discovered_uid
+    - jenkins_migration_discovered_gid
+    - jenkins_migration_discovered_home
+
+#############################
+# State Management
+#############################
+
+# Migration state file structure
+jenkins_migration_state_structure:
+  migration_id: "mig_{{ ansible_date_time.epoch }}"
+  start_time: "{{ ansible_date_time.iso8601 }}"
+  phases: "{{ jenkins_migration_phases }}"
+  status: "initialized"
+
+# State transition mapping
+jenkins_migration_state_transitions:
+  initialized: started
+  started: in_progress
+  in_progress: completed
+  completed: verified
+  failed: rollback_required
+
+#############################
+# Logging and Monitoring
+#############################
+
+# Log levels for different phases
+jenkins_migration_log_levels:
+  validation: INFO
+  discovery: DEBUG
+  migration: INFO
+  verification: INFO
+  rollback: WARNING
+
+# Monitoring endpoints for health checks
+jenkins_migration_health_endpoints:
+  - path: "/login"
+    expected_status: 200
+    timeout: 30
+  - path: "/api/json"
+    expected_status: 200
+    timeout: 10

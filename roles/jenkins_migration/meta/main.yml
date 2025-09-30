@@ -1,0 +1,39 @@
+---
+galaxy_info:
+  # Ansible-lint compliance
+  standalone: true
+
+  # Role metadata
+  author: Jenkins Migration Team
+  description: Enterprise Jenkins systemd to Docker migration with JCasC
+  company: Internal
+  license: MIT
+  min_ansible_version: "2.12"
+
+  # Supported platforms (Ubuntu 22.04 and 24.04 focus)
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy # 22.04
+        - noble # 24.04
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+
+  # Galaxy tags (lowercase only per ansible-lint requirements)
+  galaxy_tags:
+    - jenkins
+    - docker
+    - migration
+    - jcasc
+    - automation
+    - devops
+    - systemd
+    - containers
+
+dependencies: []
+collections:
+  - community.docker
+  - community.general
+  - ansible.posix

@@ -1,0 +1,116 @@
+---
+# Jenkins Migration Role - Handlers
+# Event-driven actions for service management and state updates
+
+- name: "Restart jenkins systemd"
+  ansible.builtin.systemd:
+    name: jenkins
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  listen: "restart jenkins systemd"
+
+- name: "Restart jenkins docker"
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_migration_docker_dir }}"
+    state: restarted
+  listen: "restart jenkins docker"
+
+- name: "Reload systemd daemon"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: "reload systemd daemon"
+
+- name: "Stop jenkins systemd"
+  ansible.builtin.systemd:
+    name: jenkins
+    state: stopped
+    enabled: false
+  listen: "stop jenkins systemd"
+
+- name: "Start jenkins systemd"
+  ansible.builtin.systemd:
+    name: jenkins
+    state: started
+    enabled: true
+  listen: "start jenkins systemd"
+
+- name: "Stop jenkins docker"
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_migration_docker_dir }}"
+    state: stopped
+  listen: "stop jenkins docker"
+
+- name: "Start jenkins docker"
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_migration_docker_dir }}"
+    state: present
+  listen: "start jenkins docker"
+
+- name: "Migration state update - systemd stopped"
+  ansible.builtin.replace:
+    path: "{{ jenkins_migration_state_dir }}/state.json"
+    regexp: '"status": "[^"]*"'
+    replace: '"status": "systemd_stopped"'
+  when: jenkins_migration_state_enabled | default(false)
+  listen: "Migration state update - systemd stopped"
+
+- name: "Migration state update - docker started"
+  ansible.builtin.replace:
+    path: "{{ jenkins_migration_state_dir }}/state.json"
+    regexp: '"status": "systemd_stopped"'
+    replace: '"status": "docker_started"'
+  when: jenkins_migration_state_enabled | default(false)
+  listen: "Migration state update - docker started"
+
+- name: "Migration state update - failed"
+  ansible.builtin.replace:
+    path: "{{ jenkins_migration_state_dir }}/state.json"
+    regexp: '"status": "[^"]*"'
+    replace: '"status": "failed"'
+  when: jenkins_migration_state_enabled | default(false)
+  listen: "Migration state update - failed"
+
+- name: "Cleanup on failure"
+  ansible.builtin.set_fact:
+    cleanup_triggered: true
+  listen: "cleanup on failure"
+  notify:
+    - "stop docker containers on failure"
+    - "restart systemd on failure"
+    - "update state to rollback"
+
+- name: "Stop docker containers on failure"
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_migration_docker_dir }}"
+    state: stopped
+  failed_when: false
+
+- name: "Restart systemd on failure"
+  ansible.builtin.systemd:
+    name: jenkins
+    state: started
+    enabled: true
+  failed_when: false
+
+- name: "Update state to rollback"
+  ansible.builtin.replace:
+    path: "{{ jenkins_migration_state_dir }}/state.json"
+    regexp: '"status": "[^"]*"'
+    replace: '"status": "rollback_required"'
+  when: jenkins_migration_state_enabled | default(false)
+  failed_when: false
+
+- name: "Docker network cleanup"
+  community.docker.docker_network:
+    name: "{{ jenkins_migration_docker_network }}"
+    state: absent
+  failed_when: false
+  listen: "docker network cleanup"
+
+- name: "Validate jcasc config"
+  ansible.builtin.include_tasks: validate-jcasc-config.yml
+  vars:
+    jcasc_config_file: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    jcasc_docker_mode: true
+  listen: "validate jcasc config"

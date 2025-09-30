@@ -1,0 +1,152 @@
+---
+# Extract Jenkins configuration via API
+
+- name: API Extract - Set Jenkins URL
+  ansible.builtin.set_fact:
+    jenkins_url: >-
+      {{ jenkins_migration_url |
+         default('http://localhost:' + (jenkins_migration_discovered_port | string)) }}
+  tags: [extract, jcasc]
+
+- name: API Extract - Get CSRF crumb
+  ansible.builtin.uri:
+    url: "{{ jenkins_url }}/crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)"
+    method: GET
+    url_username: "{{ jenkins_migration_user }}"
+    url_password: "{{ jenkins_migration_api_token }}"
+    force_basic_auth: true
+    validate_certs: false
+    return_content: true
+    timeout: "{{ jenkins_migration_timeouts.api_request }}"
+  register: csrf_crumb
+  tags: [extract, jcasc]
+
+- name: API Extract - Export JCasC configuration
+  ansible.builtin.uri:
+    url: "{{ jenkins_url }}/configuration-as-code/export"
+    method: POST
+    url_username: "{{ jenkins_migration_user }}"
+    url_password: "{{ jenkins_migration_api_token }}"
+    force_basic_auth: true
+    headers:
+      Jenkins-Crumb: "{{ csrf_crumb.content.split(':')[1] }}"
+    validate_certs: false
+    return_content: true
+    timeout: "{{ jenkins_migration_timeouts.api_request }}"
+  register: jcasc_export
+  when: csrf_crumb is defined and csrf_crumb.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Save JCasC configuration
+  ansible.builtin.copy:
+    content: "{{ jcasc_export.content }}"
+    dest: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    mode: "0644"
+    backup: true
+  when: jcasc_export.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Clean deprecated configurations
+  ansible.builtin.replace:
+    path: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    regexp: "{{ item.pattern }}"
+    replace: "{{ item.replacement }}"
+  loop:
+    - pattern: "(\\s+systemMessage:).*"
+      replacement: '\1 ""'
+    - pattern: "\\s+useSecurity:\\s*(true|false).*\\n"
+      replacement: ""
+    - pattern: "\\s+disableRememberMe:\\s*(true|false).*\\n"
+      replacement: ""
+  when: jcasc_export.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Ensure YAML document header
+  ansible.builtin.lineinfile:
+    path: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    line: "---"
+    insertbefore: BOF
+    create: false
+  when: jcasc_export.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Add JCasC deprecated warning config
+  ansible.builtin.lineinfile:
+    path: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    line: "configuration-as-code:"
+    insertafter: "^---$"
+    create: false
+  when: jcasc_export.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Add JCasC deprecated setting
+  ansible.builtin.lineinfile:
+    path: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    line: "  deprecated: warn"
+    insertafter: "^configuration-as-code:$"
+    create: false
+  when: jcasc_export.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Add blank line after JCasC config
+  ansible.builtin.lineinfile:
+    path: "{{ jenkins_migration_docker_dir }}/jenkins.yaml"
+    line: ""
+    insertafter: "^  deprecated: warn$"
+    create: false
+  when: jcasc_export.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Get JCasC schema for validation
+  ansible.builtin.uri:
+    url: "{{ jenkins_url }}/configuration-as-code/schema"
+    method: GET
+    url_username: "{{ jenkins_migration_user }}"
+    url_password: "{{ jenkins_migration_api_token }}"
+    force_basic_auth: true
+    headers:
+      Jenkins-Crumb: "{{ csrf_crumb.content.split(':')[1] }}"
+    validate_certs: false
+    return_content: true
+    timeout: "{{ jenkins_migration_timeouts.api_request }}"
+  register: jcasc_schema
+  when: csrf_crumb is defined and csrf_crumb.content is defined
+  failed_when:
+    - jcasc_schema is failed
+    - jcasc_schema.status != 404  # Schema endpoint might not exist in older Jenkins
+  tags: [extract, jcasc]
+
+- name: API Extract - Save schema if available
+  ansible.builtin.copy:
+    content: "{{ jcasc_schema.content }}"
+    dest: "{{ jenkins_migration_docker_dir }}/jenkins-schema.json"
+    mode: "0644"
+  when: jcasc_schema.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Get plugin list
+  ansible.builtin.uri:
+    url: "{{ jenkins_url }}/pluginManager/api/json?depth=1"
+    method: GET
+    url_username: "{{ jenkins_migration_user }}"
+    url_password: "{{ jenkins_migration_api_token }}"
+    force_basic_auth: true
+    headers:
+      Jenkins-Crumb: "{{ csrf_crumb.content.split(':')[1] }}"
+    validate_certs: false
+    timeout: "{{ jenkins_migration_timeouts.api_request }}"
+  register: plugins_response
+  when: csrf_crumb is defined and csrf_crumb.content is defined
+  tags: [extract, jcasc]
+
+- name: API Extract - Generate plugins.txt
+  ansible.builtin.copy:
+    content: |
+      # Jenkins plugins extracted on {{ ansible_date_time.iso8601 }}
+      {% for plugin in plugins_response.json.plugins %}
+      {{ plugin.shortName }}:{{ plugin.version }}
+      {% endfor %}
+    dest: "{{ jenkins_migration_docker_dir }}/plugins.txt"
+    mode: "0644"
+  when: plugins_response is defined and plugins_response.json is defined
+  tags: [extract, jcasc]
